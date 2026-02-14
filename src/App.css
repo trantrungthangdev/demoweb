@@ -1,0 +1,8 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Thêm màu nền đen cho toàn bộ trang */
+body {
+  @apply bg-zinc-950 text-white;
+}

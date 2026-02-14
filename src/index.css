@@ -1,0 +1,7 @@
+@import "tailwindcss";
+
+/* Thêm vào để test xem CSS có nhận không */
+body {
+  background-color: #09090b !important;
+  color: white !important;
+}
