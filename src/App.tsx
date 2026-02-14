@@ -2,11 +2,9 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import { createClient } from '@supabase/supabase-js';
 import { Play, Trash2, RotateCcw, UploadCloud, X, Shield, Film, Check, Image as ImageIcon } from 'lucide-react';
 
-// Cấu hình thông số từ dự án của bạn
-const SUPABASE_URL = 'https://cmxvxxkgggmibaybztcq.supabase.co';
+const SUPABASE_URL = 'https://cmxvxxkgggmiibaybztcq.supabase.co';
 const SUPABASE_KEY = 'sb_publishable_7CrnCBgIYawn7vIU8z6oqQ_yntv7K4W';
 const ACCESS_KEY = '2400H';
-const TIMEOUT_DURATION = 5 * 60 * 1000;
 
 const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
 
@@ -24,9 +22,8 @@ export default function App() {
   const [type, setType] = useState<'video' | 'image'>('video');
   const [tab, setTab] = useState<'main' | 'trash'>('main');
   const [viewing, setViewing] = useState<Media | null>(null);
+  const [uploading, setUploading] = useState<boolean>(false);
   const [uploadProgress, setUploadProgress] = useState<number>(0);
-  const [pendingFile, setPendingFile] = useState<File | null>(null);
-  const [customName, setCustomName] = useState("");
   
   const tableName = type === 'video' ? 'private_videos' : 'private_images';
   const channelRef = useRef<any>(null);
@@ -40,51 +37,17 @@ export default function App() {
     if (data) setMedia(data as Media[]);
   }, [tab, type, tableName]);
 
-  // --- REALTIME SYNC ---
   useEffect(() => {
     if (!isLogged) return;
-
     const channel = supabase
-      .channel('media_vault_changes')
+      .channel('schema-db-changes')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'private_videos' }, () => fetchMedia())
       .on('postgres_changes', { event: '*', schema: 'public', table: 'private_images' }, () => fetchMedia())
       .subscribe();
-
     channelRef.current = channel;
-
-    return () => {
-      if (channelRef.current) {
-        supabase.removeChannel(channelRef.current);
-      }
-    };
+    return () => { if (channelRef.current) supabase.removeChannel(channelRef.current); };
   }, [isLogged, fetchMedia]);
 
-  // --- XOÁ VĨNH VIỄN ---
-  const deletePermanently = async (item: Media) => {
-    if (!confirm(`Xác nhận xóa vĩnh viễn: ${item.name}?`)) return;
-
-    try {
-      const getFileName = (url: string) => url.split('/').pop()?.split('?')[0];
-      const mainFile = getFileName(item.url);
-      const thumbFile = item.thumbnail_url ? getFileName(item.thumbnail_url) : null;
-
-      const filesToRemove = [mainFile].filter(Boolean) as string[];
-      if (thumbFile && thumbFile !== mainFile) filesToRemove.push(thumbFile);
-
-      if (filesToRemove.length > 0) {
-        await supabase.storage.from('videos').remove(filesToRemove);
-      }
-
-      const { error } = await supabase.from(tableName).delete().eq('id', item.id);
-      if (error) throw error;
-
-      fetchMedia();
-    } catch (err: any) {
-      alert("Lỗi khi xóa: " + err.message);
-    }
-  };
-
-  // --- TẠO THUMBNAIL ---
   const generateThumbnail = (file: File): Promise<Blob> => {
     return new Promise((resolve) => {
       const video = document.createElement('video');
@@ -101,48 +64,67 @@ export default function App() {
     });
   };
 
-  // --- UPLOAD (SỬA LỖI TYPE ERROR CHO VERCEL) ---
- const startUpload = async () => {
-    if (!pendingFile) return;
-    const file = pendingFile;
-    setPendingFile(null);
-    setUploadProgress(1);
-    const ts = Date.now();
-    const ext = file.name.split('.').pop();
-    const cleanName = `${ts}.${ext}`;
+  // --- HÀM TẢI LÊN NHIỀU FILE ---
+  const handleMultipleUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files;
+    if (!files || files.length === 0) return;
 
-    try {
-      // Sửa lỗi TS2353 bằng cách ép kiểu 'as any' cho object cấu hình
-      await supabase.storage.from('videos').upload(cleanName, file, {
-        cacheControl: '3600',
-        upsert: false,
-        // Sửa lỗi TS7006 bằng cách khai báo kiểu (p: any)
-        onUploadProgress: (p: any) => {
-          setUploadProgress(Math.round((p.loaded / p.total) * 100));
+    setUploading(true);
+    const totalFiles = files.length;
+
+    for (let i = 0; i < totalFiles; i++) {
+      const file = files[i];
+      const ts = Date.now();
+      const cleanName = `${ts}_${file.name.replace(/\s/g, '_')}`;
+
+      try {
+        // Upload file chính
+        await supabase.storage.from('videos').upload(cleanName, file, {
+          onUploadProgress: (p: any) => {
+            const currentFileProgress = (p.loaded / p.total) * 100;
+            setUploadProgress(Math.round(((i / totalFiles) * 100) + (currentFileProgress / totalFiles)));
+          }
+        } as any);
+
+        const { data: { publicUrl } } = supabase.storage.from('videos').getPublicUrl(cleanName);
+
+        let thumbUrl = '';
+        if (type === 'video') {
+          const thumbBlob = await generateThumbnail(file);
+          const thumbName = `thumb_${cleanName}.jpg`;
+          await supabase.storage.from('videos').upload(thumbName, thumbBlob);
+          thumbUrl = supabase.storage.from('videos').getPublicUrl(thumbName).data.publicUrl;
         }
-      } as any); 
 
-      const { data: { publicUrl } } = supabase.storage.from('videos').getPublicUrl(cleanName);
-
-      let thumbUrl = '';
-      if (type === 'video') {
-        const thumbBlob = await generateThumbnail(file);
-        const thumbName = `thumb_${ts}.jpg`;
-        await supabase.storage.from('videos').upload(thumbName, thumbBlob);
-        thumbUrl = supabase.storage.from('videos').getPublicUrl(thumbName).data.publicUrl;
+        await supabase.from(tableName).insert([{
+          name: file.name.split('.').slice(0, -1).join('.'),
+          url: publicUrl,
+          thumbnail_url: thumbUrl || publicUrl,
+          is_deleted: false
+        }]);
+      } catch (err: any) {
+        console.error("Lỗi tải file:", err.message);
       }
-
-      await supabase.from(tableName).insert([{
-        name: customName || file.name,
-        url: publicUrl,
-        thumbnail_url: thumbUrl || publicUrl,
-        is_deleted: false
-      }]);
-    } catch (err: any) { 
-      alert(err.message); 
-    } finally { 
-      setTimeout(() => setUploadProgress(0), 1000); 
     }
+
+    setUploading(false);
+    setUploadProgress(0);
+    fetchMedia();
+  };
+
+  const deletePermanently = async (item: Media) => {
+    if (!confirm(`Xóa vĩnh viễn: ${item.name}?`)) return;
+    try {
+      const getFileName = (url: string) => url.split('/').pop()?.split('?')[0];
+      const mainFile = getFileName(item.url);
+      const thumbFile = item.thumbnail_url ? getFileName(item.thumbnail_url) : null;
+      const filesToRemove = [mainFile].filter(Boolean) as string[];
+      if (thumbFile && thumbFile !== mainFile) filesToRemove.push(thumbFile);
+
+      if (filesToRemove.length > 0) await supabase.storage.from('videos').remove(filesToRemove);
+      await supabase.from(tableName).delete().eq('id', item.id);
+      fetchMedia();
+    } catch (err: any) { alert(err.message); }
   };
 
   useEffect(() => { if (isLogged) fetchMedia(); }, [isLogged, fetchMedia]);
@@ -158,7 +140,6 @@ export default function App() {
           onKeyDown={(e) => { if (e.key === 'Enter' && (e.target as HTMLInputElement).value === ACCESS_KEY) {
             setIsLogged(true);
             localStorage.setItem('vault_session', ACCESS_KEY);
-            localStorage.setItem('last_activity', Date.now().toString());
           }}}
         />
       </div>
@@ -170,13 +151,9 @@ export default function App() {
       <nav className="border-b border-zinc-900 px-6 py-4 flex items-center justify-between sticky top-0 bg-zinc-950/80 backdrop-blur-md z-50">
         <div className="flex items-center gap-6">
           <div className="text-red-600 font-black italic text-xl flex items-center gap-2 uppercase tracking-tighter"><Film size={22}/> VAULT</div>
-          <div className="flex bg-zinc-900 p-1 rounded-xl shadow-inner">
-            <button onClick={() => setType('video')} className={`flex items-center gap-2 px-4 py-1.5 rounded-lg text-[10px] font-black transition-all ${type === 'video' ? 'bg-zinc-800 text-white shadow-md' : 'text-zinc-600'}`}>
-              PHIM
-            </button>
-            <button onClick={() => setType('image')} className={`flex items-center gap-2 px-4 py-1.5 rounded-lg text-[10px] font-black transition-all ${type === 'image' ? 'bg-zinc-800 text-white shadow-md' : 'text-zinc-600'}`}>
-              <ImageIcon size={14}/> ẢNH
-            </button>
+          <div className="flex bg-zinc-900 p-1 rounded-xl">
+            <button onClick={() => setType('video')} className={`px-4 py-1.5 rounded-lg text-[10px] font-black ${type === 'video' ? 'bg-zinc-800' : 'text-zinc-600'}`}>PHIM</button>
+            <button onClick={() => setType('image')} className={`px-4 py-1.5 rounded-lg text-[10px] font-black ${type === 'image' ? 'bg-zinc-800' : 'text-zinc-600'}`}>ẢNH</button>
           </div>
         </div>
 
@@ -185,47 +162,38 @@ export default function App() {
             <button onClick={() => setTab('main')} className={`px-4 py-1.5 rounded-lg text-[10px] font-black ${tab === 'main' ? 'bg-zinc-700' : 'text-zinc-600'}`}>KHO</button>
             <button onClick={() => setTab('trash')} className={`px-4 py-1.5 rounded-lg text-[10px] font-black ${tab === 'trash' ? 'bg-red-900 text-white' : 'text-zinc-600'}`}>RÁC</button>
           </div>
-          <label className="relative cursor-pointer bg-red-600 hover:bg-red-700 px-6 py-2 rounded-xl text-[10px] font-black transition active:scale-95 flex items-center gap-2 uppercase overflow-hidden min-w-[120px] justify-center">
-            {uploadProgress > 0 ? <span>{uploadProgress}%</span> : <><UploadCloud size={16}/> Tải lên</>}
-            <input type="file" className="hidden" accept={type === 'video' ? "video/*" : "image/*"} onChange={(e) => {
-              const file = e.target.files?.[0];
-              if (file) { setPendingFile(file); setCustomName(file.name.split('.').slice(0,-1).join('.')); }
-            }} disabled={uploadProgress > 0} />
-            {uploadProgress > 0 && <div className="absolute bottom-0 left-0 h-1 bg-white transition-all" style={{ width: `${uploadProgress}%` }} />}
+          
+          <label className="relative cursor-pointer bg-red-600 hover:bg-red-700 px-6 py-2 rounded-xl text-[10px] font-black transition active:scale-95 flex items-center gap-2 uppercase min-w-[120px] justify-center">
+            {uploading ? <span>{uploadProgress}%</span> : <><UploadCloud size={16}/> Tải lên</>}
+            <input 
+                type="file" 
+                className="hidden" 
+                multiple 
+                accept={type === 'video' ? "video/*" : "image/*"} 
+                onChange={handleMultipleUpload} 
+                disabled={uploading} 
+            />
           </label>
         </div>
       </nav>
 
-      {pendingFile && (
-        <div className="fixed inset-0 z-[110] bg-black/90 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-zinc-900 border border-zinc-800 p-8 rounded-[2.5rem] w-full max-w-md shadow-2xl">
-            <h3 className="text-xl font-black mb-6 italic text-red-600 uppercase tracking-widest">Tên hiển thị</h3>
-            <input autoFocus type="text" value={customName} onChange={(e) => setCustomName(e.target.value)} className="w-full bg-zinc-950 border border-zinc-800 p-4 rounded-2xl text-white outline-none focus:border-red-600 mb-6" />
-            <div className="flex gap-3">
-              <button onClick={() => setPendingFile(null)} className="flex-1 bg-zinc-800 py-4 rounded-2xl font-black text-[10px] uppercase">Hủy</button>
-              <button onClick={startUpload} className="flex-1 bg-red-600 py-4 rounded-2xl font-black text-[10px] uppercase flex items-center justify-center gap-2"><Check size={14}/> Bắt đầu tải</button>
-            </div>
-          </div>
-        </div>
-      )}
-
       <main className="flex-1 p-6">
         <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-6">
           {media.map(m => (
-            <div key={m.id} className="bg-zinc-900 border border-zinc-800 rounded-3xl overflow-hidden group hover:border-red-900/40 transition duration-500 shadow-xl">
+            <div key={m.id} className="bg-zinc-900 border border-zinc-800 rounded-3xl overflow-hidden group hover:border-red-900/40 transition duration-500 shadow-xl relative">
               <div onClick={() => setViewing(m)} className="aspect-video bg-black flex items-center justify-center cursor-pointer relative overflow-hidden">
                 <img src={m.thumbnail_url || m.url} className="w-full h-full object-cover opacity-50 group-hover:opacity-100 transition duration-500" alt="" />
                 {type === 'video' && <Play className="absolute text-white/40 group-hover:text-red-600 z-10" size={32} />}
               </div>
               <div className="p-4 bg-zinc-900/50 flex justify-between items-center">
-                <span className="text-[9px] font-black text-zinc-500 truncate w-24 uppercase tracking-tighter">{m.name}</span>
+                <span className="text-[9px] font-black text-zinc-500 truncate w-24 uppercase">{m.name}</span>
                 <div className="flex gap-2">
                   {tab === 'main' ? (
-                    <button onClick={() => supabase.from(tableName).update({ is_deleted: true }).eq('id', m.id)} className="text-zinc-700 hover:text-red-500 transition-colors"><Trash2 size={16}/></button>
+                    <button onClick={() => supabase.from(tableName).update({ is_deleted: true }).eq('id', m.id)} className="text-zinc-700 hover:text-red-500"><Trash2 size={16}/></button>
                   ) : (
                     <>
-                      <button onClick={() => supabase.from(tableName).update({ is_deleted: false }).eq('id', m.id)} className="text-green-600 transition-colors"><RotateCcw size={16}/></button>
-                      <button onClick={() => deletePermanently(m)} className="text-red-600 hover:scale-110 transition-transform"><Trash2 size={16}/></button>
+                      <button onClick={() => supabase.from(tableName).update({ is_deleted: false }).eq('id', m.id)} className="text-green-600"><RotateCcw size={16}/></button>
+                      <button onClick={() => deletePermanently(m)} className="text-red-600"><Trash2 size={16}/></button>
                     </>
                   )}
                 </div>
@@ -236,10 +204,10 @@ export default function App() {
       </main>
 
       {viewing && (
-        <div className="fixed inset-0 z-[100] bg-black/98 flex flex-col p-4 md:p-10 animate-in fade-in">
-          <button onClick={() => setViewing(null)} className="self-end bg-red-600 text-white p-2 rounded-full mb-4 shadow-xl hover:rotate-90 transition-all"><X size={20}/></button>
+        <div className="fixed inset-0 z-[100] bg-black/98 flex flex-col p-4 md:p-10">
+          <button onClick={() => setViewing(null)} className="self-end bg-red-600 text-white p-2 rounded-full mb-4 hover:rotate-90 transition-all"><X size={20}/></button>
           <div className="flex-1 w-full max-w-5xl mx-auto rounded-[2rem] overflow-hidden border border-zinc-900 bg-black flex items-center justify-center shadow-2xl">
-            {type === 'video' ? <video src={viewing.url} controls autoPlay playsInline className="max-h-full" /> : <img src={viewing.url} className="max-h-full object-contain" alt="" />}
+            {type === 'video' ? <video src={viewing.url} controls autoPlay className="max-h-full" /> : <img src={viewing.url} className="max-h-full object-contain" alt="" />}
           </div>
         </div>
       )}
