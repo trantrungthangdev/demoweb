@@ -1,13 +1,12 @@
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { createClient } from '@supabase/supabase-js';
-import { Play, Trash2, RotateCcw, UploadCloud, X, Shield, Film, Image as ImageIcon, Check } from 'lucide-react';
+import { Play, Trash2, RotateCcw, UploadCloud, X, Shield, Film, Check, Image as ImageIcon } from 'lucide-react';
 
 // Cấu hình chuẩn từ dự án của bạn
 const SUPABASE_URL = 'https://cmxvxxkgggmibaybztcq.supabase.co';
 const SUPABASE_KEY = 'sb_publishable_7CrnCBgIYawn7vIU8z6oqQ_yntv7K4W';
 const ACCESS_KEY = '2400H';
 const TIMEOUT_DURATION = 5 * 60 * 1000;
-
 
 const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
 
@@ -31,7 +30,6 @@ export default function App() {
   
   const tableName = type === 'video' ? 'private_videos' : 'private_images';
 
-  // Dùng Ref để theo dõi việc unmount, tránh lỗi WebSocket
   const channelRef = useRef<any>(null);
 
   const fetchMedia = useCallback(async () => {
@@ -43,20 +41,14 @@ export default function App() {
     if (data) setMedia(data as Media[]);
   }, [tab, type, tableName]);
 
-  // --- FIX LỖI WEBSOCKET REALTIME ---
   useEffect(() => {
     if (!isLogged) return;
 
-    // Chỉ khởi tạo khi chưa có channel hoặc component mount
     const channel = supabase
       .channel('media_vault_changes')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'private_videos' }, () => fetchMedia())
       .on('postgres_changes', { event: '*', schema: 'public', table: 'private_images' }, () => fetchMedia())
-      .subscribe((status) => {
-        if (status === 'SUBSCRIBED') {
-          console.log('Realtime connected!');
-        }
-      });
+      .subscribe();
 
     channelRef.current = channel;
 
@@ -67,12 +59,10 @@ export default function App() {
     };
   }, [isLogged, fetchMedia]);
 
-  // --- XỬ LÝ XOÁ VĨNH VIỄN ---
   const deletePermanently = async (item: Media) => {
     if (!confirm(`Bạn có chắc muốn xóa vĩnh viễn: ${item.name}?`)) return;
 
     try {
-      // Lấy tên file từ URL để xóa trong Storage
       const getFileName = (url: string) => url.split('/').pop()?.split('?')[0];
       const mainFile = getFileName(item.url);
       const thumbFile = item.thumbnail_url ? getFileName(item.thumbnail_url) : null;
@@ -80,12 +70,10 @@ export default function App() {
       const filesToRemove = [mainFile].filter(Boolean) as string[];
       if (thumbFile && thumbFile !== mainFile) filesToRemove.push(thumbFile);
 
-      // 1. Xóa file vật lý trong Storage
       if (filesToRemove.length > 0) {
         await supabase.storage.from('videos').remove(filesToRemove);
       }
 
-      // 2. Xóa dữ liệu trong Database
       const { error } = await supabase.from(tableName).delete().eq('id', item.id);
       if (error) throw error;
 
@@ -95,7 +83,6 @@ export default function App() {
     }
   };
 
-  // --- LOGIC THUMBNAIL & UPLOAD ---
   const generateThumbnail = (file: File): Promise<Blob> => {
     return new Promise((resolve) => {
       const video = document.createElement('video');
@@ -170,8 +157,8 @@ export default function App() {
         <div className="flex items-center gap-6">
           <div className="text-red-600 font-black italic text-xl flex items-center gap-2 uppercase tracking-tighter"><Film size={22}/> VAULT</div>
           <div className="flex bg-zinc-900 p-1 rounded-xl shadow-inner">
-            <button onClick={() => setType('video')} className={`px-4 py-1.5 rounded-lg text-[10px] font-black transition-all ${type === 'video' ? 'bg-zinc-800 text-white' : 'text-zinc-600'}`}>PHIM</button>
-            <button onClick={() => setType('image')} className={`px-4 py-1.5 rounded-lg text-[10px] font-black transition-all ${type === 'image' ? 'bg-zinc-800 text-white' : 'text-zinc-600'}`}>ẢNH</button>
+            <button onClick={() => setType('video')} className={`flex items-center gap-2 px-4 py-1.5 rounded-lg text-[10px] font-black transition-all ${type === 'video' ? 'bg-zinc-800 text-white' : 'text-zinc-600'}`}>PHIM</button>
+            <button onClick={() => setType('image')} className={`flex items-center gap-2 px-4 py-1.5 rounded-lg text-[10px] font-black transition-all ${type === 'image' ? 'bg-zinc-800 text-white' : 'text-zinc-600'}`}>ẢNH</button>
           </div>
         </div>
 
@@ -191,7 +178,6 @@ export default function App() {
         </div>
       </nav>
 
-      {/* MODAL ĐẶT TÊN */}
       {pendingFile && (
         <div className="fixed inset-0 z-[110] bg-black/90 backdrop-blur-sm flex items-center justify-center p-4">
           <div className="bg-zinc-900 border border-zinc-800 p-8 rounded-[2.5rem] w-full max-w-md shadow-2xl">
@@ -205,7 +191,6 @@ export default function App() {
         </div>
       )}
 
-      {/* GRID HIỂN THỊ */}
       <main className="flex-1 p-6">
         <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-6">
           {media.map(m => (
@@ -232,7 +217,6 @@ export default function App() {
         </div>
       </main>
 
-      {/* PLAYER / VIEWER */}
       {viewing && (
         <div className="fixed inset-0 z-[100] bg-black/98 flex flex-col p-4 md:p-10 animate-in fade-in">
           <button onClick={() => setViewing(null)} className="self-end bg-red-600 text-white p-2 rounded-full mb-4 shadow-xl hover:rotate-90 transition-all"><X size={20}/></button>
