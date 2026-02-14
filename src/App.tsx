@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import { createClient } from '@supabase/supabase-js';
 import { Play, Trash2, RotateCcw, UploadCloud, X, Shield, Film, Check, Image as ImageIcon } from 'lucide-react';
 
-// Cấu hình chuẩn từ dự án của bạn
+// Cấu hình thông số từ dự án của bạn
 const SUPABASE_URL = 'https://cmxvxxkgggmibaybztcq.supabase.co';
 const SUPABASE_KEY = 'sb_publishable_7CrnCBgIYawn7vIU8z6oqQ_yntv7K4W';
 const ACCESS_KEY = '2400H';
@@ -29,7 +29,6 @@ export default function App() {
   const [customName, setCustomName] = useState("");
   
   const tableName = type === 'video' ? 'private_videos' : 'private_images';
-
   const channelRef = useRef<any>(null);
 
   const fetchMedia = useCallback(async () => {
@@ -41,6 +40,7 @@ export default function App() {
     if (data) setMedia(data as Media[]);
   }, [tab, type, tableName]);
 
+  // --- REALTIME SYNC ---
   useEffect(() => {
     if (!isLogged) return;
 
@@ -59,8 +59,9 @@ export default function App() {
     };
   }, [isLogged, fetchMedia]);
 
+  // --- XOÁ VĨNH VIỄN ---
   const deletePermanently = async (item: Media) => {
-    if (!confirm(`Bạn có chắc muốn xóa vĩnh viễn: ${item.name}?`)) return;
+    if (!confirm(`Xác nhận xóa vĩnh viễn: ${item.name}?`)) return;
 
     try {
       const getFileName = (url: string) => url.split('/').pop()?.split('?')[0];
@@ -83,6 +84,7 @@ export default function App() {
     }
   };
 
+  // --- TẠO THUMBNAIL ---
   const generateThumbnail = (file: File): Promise<Blob> => {
     return new Promise((resolve) => {
       const video = document.createElement('video');
@@ -99,6 +101,7 @@ export default function App() {
     });
   };
 
+  // --- UPLOAD (SỬA LỖI TYPE ERROR CHO VERCEL) ---
   const startUpload = async () => {
     if (!pendingFile) return;
     const file = pendingFile;
@@ -110,8 +113,13 @@ export default function App() {
 
     try {
       await supabase.storage.from('videos').upload(cleanName, file, {
-        onUploadProgress: (p) => setUploadProgress(Math.round((p.loaded / p.total) * 100))
-      });
+        cacheControl: '3600',
+        upsert: false,
+        onUploadProgress: (p: any) => {
+          setUploadProgress(Math.round((p.loaded / p.total) * 100));
+        }
+      } as any);
+
       const { data: { publicUrl } } = supabase.storage.from('videos').getPublicUrl(cleanName);
 
       let thumbUrl = '';
@@ -128,7 +136,11 @@ export default function App() {
         thumbnail_url: thumbUrl || publicUrl,
         is_deleted: false
       }]);
-    } catch (err: any) { alert(err.message); } finally { setTimeout(() => setUploadProgress(0), 1000); }
+    } catch (err: any) { 
+      alert(err.message); 
+    } finally { 
+      setTimeout(() => setUploadProgress(0), 1000); 
+    }
   };
 
   useEffect(() => { if (isLogged) fetchMedia(); }, [isLogged, fetchMedia]);
@@ -157,8 +169,12 @@ export default function App() {
         <div className="flex items-center gap-6">
           <div className="text-red-600 font-black italic text-xl flex items-center gap-2 uppercase tracking-tighter"><Film size={22}/> VAULT</div>
           <div className="flex bg-zinc-900 p-1 rounded-xl shadow-inner">
-            <button onClick={() => setType('video')} className={`flex items-center gap-2 px-4 py-1.5 rounded-lg text-[10px] font-black transition-all ${type === 'video' ? 'bg-zinc-800 text-white' : 'text-zinc-600'}`}>PHIM</button>
-            <button onClick={() => setType('image')} className={`flex items-center gap-2 px-4 py-1.5 rounded-lg text-[10px] font-black transition-all ${type === 'image' ? 'bg-zinc-800 text-white' : 'text-zinc-600'}`}>ẢNH</button>
+            <button onClick={() => setType('video')} className={`flex items-center gap-2 px-4 py-1.5 rounded-lg text-[10px] font-black transition-all ${type === 'video' ? 'bg-zinc-800 text-white shadow-md' : 'text-zinc-600'}`}>
+              PHIM
+            </button>
+            <button onClick={() => setType('image')} className={`flex items-center gap-2 px-4 py-1.5 rounded-lg text-[10px] font-black transition-all ${type === 'image' ? 'bg-zinc-800 text-white shadow-md' : 'text-zinc-600'}`}>
+              <ImageIcon size={14}/> ẢNH
+            </button>
           </div>
         </div>
 
@@ -220,7 +236,7 @@ export default function App() {
       {viewing && (
         <div className="fixed inset-0 z-[100] bg-black/98 flex flex-col p-4 md:p-10 animate-in fade-in">
           <button onClick={() => setViewing(null)} className="self-end bg-red-600 text-white p-2 rounded-full mb-4 shadow-xl hover:rotate-90 transition-all"><X size={20}/></button>
-          <div className="flex-1 w-full max-w-5xl mx-auto rounded-[2rem] overflow-hidden border border-zinc-900 bg-black flex items-center justify-center shadow-2xl shadow-red-900/5">
+          <div className="flex-1 w-full max-w-5xl mx-auto rounded-[2rem] overflow-hidden border border-zinc-900 bg-black flex items-center justify-center shadow-2xl">
             {type === 'video' ? <video src={viewing.url} controls autoPlay playsInline className="max-h-full" /> : <img src={viewing.url} className="max-h-full object-contain" alt="" />}
           </div>
         </div>
