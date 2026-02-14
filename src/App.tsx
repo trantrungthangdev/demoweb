@@ -102,7 +102,7 @@ export default function App() {
   };
 
   // --- UPLOAD (SỬA LỖI TYPE ERROR CHO VERCEL) ---
-  const startUpload = async () => {
+ const startUpload = async () => {
     if (!pendingFile) return;
     const file = pendingFile;
     setPendingFile(null);
@@ -112,13 +112,15 @@ export default function App() {
     const cleanName = `${ts}.${ext}`;
 
     try {
+      // Sửa lỗi TS2353 bằng cách ép kiểu 'as any' cho object cấu hình
       await supabase.storage.from('videos').upload(cleanName, file, {
         cacheControl: '3600',
         upsert: false,
+        // Sửa lỗi TS7006 bằng cách khai báo kiểu (p: any)
         onUploadProgress: (p: any) => {
           setUploadProgress(Math.round((p.loaded / p.total) * 100));
         }
-      } as any);
+      } as any); 
 
       const { data: { publicUrl } } = supabase.storage.from('videos').getPublicUrl(cleanName);
 
