@@ -42,7 +42,7 @@ export default function CinemaVault() {
   
   const videoRef = useRef<HTMLVideoElement>(null);
   const playerContainerRef = useRef<HTMLDivElement>(null);
-  const controlsTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const controlsTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const tableName = type === 'video' ? 'private_videos' : 'private_images';
 
   // --- AUTH LOGIC ---
