@@ -46,6 +46,10 @@ export default function CinemaVault() {
   const [newCollectionName, setNewCollectionName] = useState("");
   const [selectedColId, setSelectedColId] = useState<string | null>(null);
 
+  // --- STATES VIẾT THÊM CHO MOBILE (LONG PRESS) ---
+  const [longPressMenu, setLongPressMenu] = useState<{ show: boolean, target: Media | null }>({ show: false, target: null });
+  const longPressTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
   // --- VIDEO PLAYER STATES ---
   const [isPlaying, setIsPlaying] = useState<boolean>(true);
   const [playbackRate, setPlaybackRate] = useState<number>(1);
@@ -61,6 +65,18 @@ export default function CinemaVault() {
   
   // XÁC ĐỊNH BẢNG CHUẨN DỰA TRÊN TYPE ĐỂ FIX LỖI LỌC CHUNG
   const tableName = type === 'image' ? 'private_images' : 'private_videos';
+
+  // --- LOGIC NHẤN GIỮ ---
+  const handleTouchStart = (m: Media) => {
+    longPressTimer.current = setTimeout(() => {
+      setLongPressMenu({ show: true, target: m });
+      if (navigator.vibrate) navigator.vibrate(50); 
+    }, 600);
+  };
+
+  const handleTouchEnd = () => {
+    if (longPressTimer.current) clearTimeout(longPressTimer.current);
+  };
 
   // --- LOGIC TẠO THUMBNAIL (GIỮ NGUYÊN) ---
   const generateVideoThumbnail = (file: File): Promise<Blob> => {
@@ -102,23 +118,31 @@ export default function CinemaVault() {
     if (data) setCollections(data);
   };
 
-  const fetchMedia = useCallback(async () => {
-    if (type === 'collection') return;
-    
-    // FETCH DỮ LIỆU TỪ BẢNG TƯƠNG ỨNG (VIDEO HOẶC IMAGE)
-    let query = supabase
-      .from(tableName)
-      .select('*')
-      .eq('is_deleted', tab === 'trash');
-    
-    // NẾU ĐANG LỌC THEO BỘ SƯU TẬP, THÊM ĐIỀU KIỆN ID
-    if (selectedColId && tab === 'main') {
-      query = query.eq('collection_id', selectedColId);
-    }
+const fetchMedia = useCallback(async () => {
+  if (type === 'collection') return;
 
-    const { data } = await query.order('created_at', { ascending: false });
-    if (data) setMedia(data as Media[]);
-  }, [tab, type, tableName, selectedColId]);
+  // Xác định bảng dựa trên type hiện tại
+  const activeTable = type === 'image' ? 'private_images' : 'private_videos';
+
+  let query = supabase
+    .from(activeTable)
+    .select('*')
+    .eq('is_deleted', tab === 'trash');
+
+  // Lọc theo bộ sưu tập nếu có selectedColId
+  if (selectedColId && tab === 'main') {
+    query = query.eq('collection_id', selectedColId);
+  }
+
+  const { data, error } = await query.order('created_at', { ascending: false });
+  
+  if (error) {
+    console.error("Lỗi lấy dữ liệu:", error.message);
+    return;
+  }
+  
+  if (data) setMedia(data as Media[]);
+}, [tab, type, selectedColId]); // tableName đã được tính toán bên trong nên không cần bỏ vào dependency [tab, type, tableName, selectedColId]);
 
   useEffect(() => {
     if (isLogged) {
@@ -268,6 +292,61 @@ export default function CinemaVault() {
         </div>
       )}
 
+      {/* MOBILE CONTEXT MENU (NHẤN GIỮ) */}
+      {longPressMenu.show && longPressMenu.target && (
+        <div className="fixed inset-0 z-[300] flex items-end sm:items-center justify-center p-4 animate-in fade-in duration-200">
+          <div className="absolute inset-0 bg-black/70 backdrop-blur-sm" onClick={() => setLongPressMenu({ show: false, target: null })} />
+          <div className="relative w-full max-w-sm bg-zinc-900 border border-white/10 rounded-t-[2.5rem] sm:rounded-[2.5rem] overflow-hidden animate-in slide-in-from-bottom duration-300">
+            <div className="p-6 border-b border-white/5 flex items-center gap-4">
+               <img src={longPressMenu.target.thumbnail_url || longPressMenu.target.url} className="w-16 h-10 object-cover rounded-lg border border-white/10" alt="" />
+               <div className="flex-1 overflow-hidden">
+                 <p className="text-white font-bold truncate uppercase italic text-sm">{longPressMenu.target.name}</p>
+                 <p className="text-zinc-500 text-[10px] tracking-widest uppercase">Tùy chọn nhanh</p>
+               </div>
+               <button onClick={() => setLongPressMenu({ show: false, target: null })} className="p-2 text-zinc-500"><X size={20}/></button>
+            </div>
+            
+            <div className="p-2 grid grid-cols-1 gap-1">
+              <div className="p-4">
+                <p className="text-zinc-500 text-[10px] font-black uppercase mb-3 px-2 tracking-widest">Thêm vào bộ sưu tập</p>
+                <div className="flex gap-2 overflow-x-auto no-scrollbar pb-2">
+                   <button onClick={() => { addToCollection(longPressMenu.target!.id, null); setLongPressMenu({ show: false, target: null }); }} className={`whitespace-nowrap px-4 py-2 rounded-xl text-[10px] font-bold uppercase border ${!longPressMenu.target.collection_id ? 'bg-white text-black border-white' : 'bg-zinc-800 border-white/5 text-zinc-400'}`}>Mặc định</button>
+                   {collections.map(c => (
+                     <button key={c.id} onClick={() => { addToCollection(longPressMenu.target!.id, c.id); setLongPressMenu({ show: false, target: null }); }} className={`whitespace-nowrap px-4 py-2 rounded-xl text-[10px] font-bold uppercase border ${longPressMenu.target?.collection_id === c.id ? 'bg-red-600 border-red-600 text-white' : 'bg-zinc-800 border-white/5 text-red-400'}`}>
+                       {c.name}
+                     </button>
+                   ))}
+                </div>
+              </div>
+
+              <div className="h-px bg-white/5 mx-4" />
+
+              <button 
+                onClick={async () => {
+                  if (tab === 'main') {
+                    await supabase.from(tableName).update({ is_deleted: true }).eq('id', longPressMenu.target!.id);
+                    fetchMedia();
+                  } else {
+                    setConfirmModal({ show: true, target: longPressMenu.target! });
+                  }
+                  setLongPressMenu({ show: false, target: null });
+                }}
+                className="flex items-center gap-4 p-4 w-full text-left hover:bg-red-600/10 transition-colors group"
+              >
+                <div className="w-10 h-10 bg-red-600/10 rounded-full flex items-center justify-center text-red-500 group-hover:bg-red-600 group-hover:text-white transition-all">
+                  <Trash2 size={18} />
+                </div>
+                <div>
+                  <p className="text-red-500 font-bold text-sm uppercase italic">Xóa mục này</p>
+                  <p className="text-zinc-600 text-[10px]">{tab === 'main' ? 'Chuyển vào thùng rác' : 'Xóa vĩnh viễn khỏi mây'}</p>
+                </div>
+              </button>
+            </div>
+            <div className="h-6 sm:hidden" />
+          </div>
+        </div>
+      )}
+
       {/* SIDEBAR NAVIGATION */}
       <nav className="fixed left-0 top-0 bottom-0 w-20 md:w-24 bg-black/50 backdrop-blur-xl border-r border-white/5 flex flex-col items-center py-8 gap-8 z-[60] max-sm:w-full max-sm:h-16 max-sm:flex-row max-sm:bottom-0 max-sm:top-auto max-sm:border-r-0 max-sm:border-t max-sm:justify-around max-sm:py-0">
 
@@ -286,7 +365,7 @@ export default function CinemaVault() {
         <button onClick={handleLogout} className="p-4 text-zinc-600 hover:text-red-500 transition-colors"><LogOut size={22} /></button>
       </nav>
 
-      <main className="pl-20 md:pl-24 max-sm:pl-0 max-sm:pb-20">
+      <main className="pl-20 md:pl-24 max-sm:pl-0 max-sm:pb-24">
         
         {type === 'collection' ? (
           <div className="p-12 animate-in fade-in duration-500">
@@ -348,12 +427,18 @@ export default function CinemaVault() {
 
               <div className="grid grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5 gap-4 md:gap-10">
                 {media.map(m => (
-                  <div key={m.id} className="group relative flex flex-col gap-3">
+                  <div 
+                    key={m.id} 
+                    className="group relative flex flex-col gap-3 touch-none"
+                    onTouchStart={() => handleTouchStart(m)}
+                    onTouchEnd={handleTouchEnd}
+                    onContextMenu={(e) => { e.preventDefault(); setLongPressMenu({ show: true, target: m }); }}
+                  >
                     <div className="relative aspect-video rounded-xl md:rounded-[2rem] overflow-hidden bg-zinc-900 border border-white/5 group-hover:border-red-600 transition-all duration-500 shadow-xl">
                       <img src={m.thumbnail_url || m.url} className="w-full h-full object-cover opacity-70 group-hover:opacity-100 transition-all duration-700" alt="" />
                       <div className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity bg-black/40"><button onClick={() => { setViewing(m); setIsPlaying(true); }} className="w-10 h-10 md:w-16 md:h-16 bg-red-600 text-white rounded-full flex items-center justify-center shadow-lg transform scale-75 group-hover:scale-100 transition-transform"><Play size={24} fill="currentColor" className="ml-1" /></button></div>
-                      <button onClick={async () => { if (tab === 'main') { await supabase.from(tableName).update({ is_deleted: true }).eq('id', m.id); fetchMedia(); } else { setConfirmModal({ show: true, target: m }); } }} className="absolute top-2 right-2 p-2 bg-black/60 rounded-xl text-white opacity-0 group-hover:opacity-100 transition-opacity hover:bg-red-600">{tab === 'main' ? <Trash2 size={16} /> : <X size={16} />}</button>
-                      {tab === 'trash' && (<button onClick={async () => { await supabase.from(tableName).update({ is_deleted: false }).eq('id', m.id); fetchMedia(); }} className="absolute top-2 right-12 p-2 bg-black/60 rounded-xl text-white opacity-0 group-hover:opacity-100 transition-opacity hover:bg-green-600"><RotateCcw size={16} /></button>)}
+                      <button onClick={async () => { if (tab === 'main') { await supabase.from(tableName).update({ is_deleted: true }).eq('id', m.id); fetchMedia(); } else { setConfirmModal({ show: true, target: m }); } }} className="absolute top-2 right-2 p-2 bg-black/60 rounded-xl text-white opacity-0 group-hover:opacity-100 transition-opacity hover:bg-red-600 max-sm:hidden">{tab === 'main' ? <Trash2 size={16} /> : <X size={16} />}</button>
+                      {tab === 'trash' && (<button onClick={async () => { await supabase.from(tableName).update({ is_deleted: false }).eq('id', m.id); fetchMedia(); }} className="absolute top-2 right-12 p-2 bg-black/60 rounded-xl text-white opacity-0 group-hover:opacity-100 transition-opacity hover:bg-green-600 max-sm:hidden"><RotateCcw size={16} /></button>)}
                     </div>
                     <h4 className="font-bold text-zinc-400 truncate text-[10px] md:text-xs uppercase tracking-widest px-1">{m.name}</h4>
                   </div>
@@ -364,12 +449,17 @@ export default function CinemaVault() {
         )}
       </main>
 
-      {/* PLAYER MODAL (Cập nhật giao diện chọn Bộ sưu tập) */}
+      {/* PLAYER MODAL (Đã sửa lỗi tiêu đề quá dài làm ẩn nút tắt) */}
       {viewing && (
         <div className="fixed inset-0 z-[100] bg-black flex flex-col animate-in fade-in duration-300" onMouseMove={handleUserActivity} onClick={handleUserActivity}>
-          <div className={`absolute top-0 inset-x-0 z-20 flex justify-between items-center p-4 md:p-8 bg-gradient-to-b from-black/80 to-transparent transition-opacity duration-500 ${showControls ? 'opacity-100' : 'opacity-0'}`}>
-            <div className="flex flex-col gap-2">
-               <div className="flex items-center gap-3"><div className="w-1 h-6 md:h-10 bg-red-600 rounded-full" /><h2 className="text-lg md:text-3xl font-black uppercase tracking-tighter italic">{viewing.name}</h2></div>
+          <div className={`absolute top-0 inset-x-0 z-20 flex justify-between items-start p-4 md:p-8 bg-gradient-to-b from-black/80 to-transparent transition-opacity duration-500 ${showControls ? 'opacity-100' : 'opacity-0'}`}>
+            <div className="flex flex-col gap-2 flex-1 min-w-0 pr-4"> {/* Thêm flex-1 và min-w-0 để tiêu đề không đẩy nút X */}
+               <div className="flex items-center gap-3">
+                 <div className="w-1 h-6 md:h-10 bg-red-600 rounded-full flex-shrink-0" />
+                 <h2 className="text-lg md:text-3xl font-black uppercase tracking-tighter italic truncate"> {/* Thêm truncate */}
+                   {viewing.name}
+                 </h2>
+               </div>
                
                {/* THANH CHỌN BỘ SƯU TẬP TRONG PLAYER */}
                <div className="flex gap-2 overflow-x-auto max-w-sm no-scrollbar pb-2">
@@ -379,7 +469,10 @@ export default function CinemaVault() {
                   ))}
                </div>
             </div>
-            <button onClick={() => setViewing(null)} className="w-10 h-10 md:w-14 md:h-14 bg-white/10 hover:bg-red-600 rounded-full flex items-center justify-center transition-all self-start"><X size={24} /></button>
+            {/* Nút X thêm flex-shrink-0 để luôn giữ kích thước */}
+            <button onClick={() => setViewing(null)} className="w-10 h-10 md:w-14 md:h-14 bg-white/10 hover:bg-red-600 rounded-full flex items-center justify-center transition-all self-start flex-shrink-0">
+              <X size={24} />
+            </button>
           </div>
           
           <div ref={playerContainerRef} className="flex-1 flex items-center justify-center relative bg-black overflow-hidden group/player">
@@ -422,6 +515,12 @@ export default function CinemaVault() {
           </div>
         </div>
       )}
+
+      {/* CSS STYLE VIẾT THÊM */}
+      <style>{`
+        .no-scrollbar::-webkit-scrollbar { display: none; }
+        .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+      `}</style>
     </div>
   );
 }
