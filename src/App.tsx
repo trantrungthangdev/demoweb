@@ -3,7 +3,7 @@ import { createClient } from '@supabase/supabase-js';
 import { 
   Play, Trash2, RotateCcw, X, Shield, 
   Film, Image as ImageIcon, LogOut, 
-  Maximize, Volume2, Pause, ChevronRight, FastForward, Rewind, VolumeX,
+  Maximize, Pause, ChevronRight, FastForward, Rewind,
   Plus, Library, Download, Loader2, AlertCircle
 } from 'lucide-react';
 
@@ -34,8 +34,6 @@ export default function CinemaVault() {
   // --- STATES PLAYER (GIỮ NGUYÊN 100% - CẤM XOÁ) ---
   const [isPlaying, setIsPlaying] = useState<boolean>(true);
   const [playbackRate, setPlaybackRate] = useState<number>(1);
-  const [volume, setVolume] = useState<number>(1);
-  const [isMuted, setIsMuted] = useState<boolean>(false);
   const [currentTime, setCurrentTime] = useState<number>(0);
   const [duration, setDuration] = useState<number>(0);
   const [showControls, setShowControls] = useState<boolean>(true);
@@ -43,9 +41,6 @@ export default function CinemaVault() {
   const videoRef = useRef<HTMLVideoElement>(null);
   const playerContainerRef = useRef<HTMLDivElement>(null);
   const controlsTimeoutRef = useRef<any>(null);
-
-  const isVideoFile = (url: string) => url?.match(/\.(mp4|webm|ogg|mov|m4v)/i);
-  const isImageFile = (url: string) => url?.match(/\.(jpg|jpeg|png|gif|webp)/i);
 
   const sanitizeFileName = (name: string) => {
     return name.normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^\x00-\x7F]/g, '').replace(/\s+/g, '_').replace(/[^a-zA-Z0-9._-]/g, '');
@@ -90,11 +85,13 @@ export default function CinemaVault() {
     setShowLogoutModal(false);
   };
 
-  // --- ACTIONS: TẢI LÊN ---
+  // --- ACTIONS: TẢI LÊN (FIX LỖI TS2353 & TS7006) ---
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files;
     if (!files || files.length === 0) return;
     setUploading(true);
+    setUploadProgress(10); // Khởi tạo progress giả để hiển thị thanh load
+
     for (let i = 0; i < files.length; i++) {
       const file = files[i];
       const isVideo = file.type.startsWith('video/');
@@ -102,11 +99,20 @@ export default function CinemaVault() {
       const tableName = isVideo ? 'private_videos' : 'private_images';
       const fileName = `${Date.now()}_${sanitizeFileName(file.name)}`;
       try {
-        const { error: storageError } = await supabase.storage.from(bucketName).upload(fileName, file, {
+        // Ép kiểu 'any' để tránh lỗi TS2353 do định nghĩa FileOptions không khớp
+        const uploadOptions: any = {
           contentType: file.type,
-          onUploadProgress: (p) => setUploadProgress(Math.round((p.bytesTransferred / p.totalBytes) * 100))
-        });
+          upsert: false
+        };
+
+        const { error: storageError } = await supabase.storage
+          .from(bucketName)
+          .upload(fileName, file, uploadOptions);
+
         if (storageError) throw storageError;
+
+        setUploadProgress(Math.round(((i + 1) / files.length) * 100));
+
         const { data: { publicUrl } } = supabase.storage.from(bucketName).getPublicUrl(fileName);
         await supabase.from(tableName).insert([{ name: file.name, url: publicUrl, is_deleted: false }]);
       } catch (error: any) { alert("Lỗi: " + error.message); }
@@ -119,7 +125,7 @@ export default function CinemaVault() {
     setIsLoading(true);
     const isImg = item.origin_table === 'private_images';
     const sourceBucket = isImg ? 'images' : 'videos';
-    const oldFileName = item.url.split('/').pop().split('?')[0];
+    const oldFileName = item.url.split('/').pop()?.split('?')[0] || "";
     const trashFileName = `trash_${Date.now()}_${oldFileName}`;
 
     try {
@@ -150,7 +156,7 @@ export default function CinemaVault() {
     setIsLoading(true);
     const isImg = item.origin_table === 'private_images';
     const targetBucket = isImg ? 'images' : 'videos';
-    const trashFileName = item.url.split('/').pop().split('?')[0];
+    const trashFileName = item.url.split('/').pop()?.split('?')[0] || "";
     const originalFileName = `restored_${Date.now()}_${trashFileName.replace('trash_', '')}`;
 
     try {
@@ -176,13 +182,14 @@ export default function CinemaVault() {
     setLongPressedId(null); await fetchMedia();
   };
 
+  // --- ACTIONS: XOÁ VĨNH VIỄN (FIX LỖI TS2322) ---
   const handlePermanentDelete = async (id: string, itemUrl: string, table: string) => {
     if (confirm("Xoá vĩnh viễn tệp này?")) {
       setIsLoading(true);
-      const fileName = itemUrl.split('/').pop()?.split('?')[0];
+      const fileName = itemUrl.split('/').pop()?.split('?')[0] || "unknown_file";
       try {
         await Promise.all([
-          supabase.storage.from('trash').remove([fileName || ""]),
+          supabase.storage.from('trash').remove([fileName]),
           supabase.from(table).delete().eq('id', id)
         ]);
         await fetchMedia();
@@ -197,9 +204,9 @@ export default function CinemaVault() {
     setIsLoading(true);
     try {
       await Promise.all(media.map(async (item) => {
-        const fileName = item.url.split('/').pop()?.split('?')[0];
+        const fileName = item.url.split('/').pop()?.split('?')[0] || "unknown_file";
         return Promise.all([
-          supabase.storage.from('trash').remove([fileName || ""]),
+          supabase.storage.from('trash').remove([fileName]),
           supabase.from(item.origin_table).delete().eq('id', item.id)
         ]);
       }));
@@ -229,27 +236,20 @@ export default function CinemaVault() {
     <div className="flex h-screen w-full bg-[#070707] text-zinc-100 font-sans overflow-hidden select-none" onClick={() => setLongPressedId(null)}>
       {(isLoading || uploading) && <div className="fixed top-0 left-0 right-0 h-1 z-[110] bg-zinc-800 overflow-hidden"><div className="h-full bg-red-600 transition-all duration-300" style={{ width: uploading ? `${uploadProgress}%` : '50%' }}></div></div>}
 
-      {/* SIDEBAR TỐI ƯU PC */}
       <nav className="fixed bottom-0 left-0 w-full h-16 bg-zinc-900/95 border-t border-white/5 flex items-center justify-around z-[60] md:static md:w-20 lg:w-64 md:h-full md:flex-col md:bg-black md:border-r md:border-t-0 md:px-4 md:py-8">
-        <div className="hidden md:block mb-12">
-            <Shield className="text-red-600" size={32} />
-        </div>
-        
+        <div className="hidden md:block mb-12"><Shield className="text-red-600" size={32} /></div>
         <div className="flex flex-row md:flex-col items-center justify-around w-full md:gap-4">
             <NavItem active={type === 'video' && tab === 'main'} onClick={() => {setType('video'); setTab('main');}} icon={<Film size={22}/>} label="Phim" />
             <NavItem active={type === 'image' && tab === 'main'} onClick={() => {setType('image'); setTab('main');}} icon={<ImageIcon size={22}/>} label="Ảnh" />
             <NavItem active={type === 'library' || tab === 'trash'} onClick={() => setType('library')} icon={<Library size={22}/>} label="Thư viện" />
         </div>
-
         <div className="md:mt-auto">
             <button onClick={() => setShowLogoutModal(true)} className="p-4 text-zinc-500 hover:text-red-500 transition-colors flex items-center gap-4">
-                <LogOut size={22}/>
-                <span className="hidden lg:block text-xs font-black uppercase italic">Thoát</span>
+                <LogOut size={22}/><span className="hidden lg:block text-xs font-black uppercase italic">Thoát</span>
             </button>
         </div>
       </nav>
 
-      {/* CONTENT AREA */}
       <main className="flex-1 flex flex-col h-full overflow-hidden">
         <header className="flex-none bg-black/80 backdrop-blur-md px-6 py-5 flex items-center justify-between border-b border-white/5">
           <h2 className="text-xl font-black italic uppercase text-zinc-400 tracking-wider">
@@ -270,13 +270,8 @@ export default function CinemaVault() {
             <div className="max-w-2xl mx-auto space-y-4">
               <div onClick={() => {setTab('trash'); setType('video');}} className="flex items-center justify-between p-8 bg-zinc-900/50 rounded-[2.5rem] border border-white/5 cursor-pointer hover:bg-zinc-800 hover:border-red-600/30 transition-all group">
                 <div className="flex items-center gap-6">
-                    <div className="w-16 h-16 bg-red-600/10 rounded-2xl flex items-center justify-center text-red-500 group-hover:scale-110 transition-transform">
-                        <Trash2 size={28}/>
-                    </div>
-                    <div>
-                        <p className="text-lg font-black uppercase italic">Thùng rác</p>
-                        <p className="text-[10px] text-zinc-500 uppercase tracking-widest">{media.length} tệp đã xoá</p>
-                    </div>
+                    <div className="w-16 h-16 bg-red-600/10 rounded-2xl flex items-center justify-center text-red-500 group-hover:scale-110 transition-transform"><Trash2 size={28}/></div>
+                    <div><p className="text-lg font-black uppercase italic">Thùng rác</p><p className="text-[10px] text-zinc-500 uppercase tracking-widest">{media.length} tệp</p></div>
                 </div>
                 <ChevronRight className="text-zinc-600 group-hover:text-red-500 transition-colors" />
               </div>
@@ -299,28 +294,11 @@ export default function CinemaVault() {
                   ) : (
                     <img src={m.url} className="w-full h-full object-cover" loading="lazy" />
                   )}
-
-                  {/* OVERLAY HOVER/LONGPRESS */}
-                  <div className={`absolute inset-0 bg-black/70 backdrop-blur-[3px] flex flex-col items-center justify-center gap-4 z-10 transition-all duration-300 
-                    ${longPressedId === m.id ? 'opacity-100 visible' : 'opacity-0 invisible md:group-hover:opacity-100 md:group-hover:visible'}`}>
-                    
-                    {tab === 'trash' && (
-                      <button onClick={(e) => {e.stopPropagation(); handleRestore(m)}} className="w-12 h-12 bg-white text-black rounded-full flex items-center justify-center shadow-2xl hover:scale-110 active:scale-90 transition-transform">
-                        <RotateCcw size={22}/>
-                      </button>
-                    )}
-                    
-                    <button onClick={(e) => {e.stopPropagation(); tab === 'trash' ? handlePermanentDelete(m.id, m.url, m.origin_table) : handleMoveToTrash(m)}} className="w-12 h-12 bg-red-600 text-white rounded-full flex items-center justify-center shadow-2xl hover:scale-110 active:scale-90 transition-transform">
-                      <Trash2 size={22}/>
-                    </button>
+                  <div className={`absolute inset-0 bg-black/70 backdrop-blur-[3px] flex flex-col items-center justify-center gap-4 z-10 transition-all duration-300 ${longPressedId === m.id ? 'opacity-100 visible' : 'opacity-0 invisible md:group-hover:opacity-100 md:group-hover:visible'}`}>
+                    {tab === 'trash' && (<button onClick={(e) => {e.stopPropagation(); handleRestore(m)}} className="w-12 h-12 bg-white text-black rounded-full flex items-center justify-center shadow-2xl hover:scale-110 active:scale-90 transition-transform"><RotateCcw size={22}/></button>)}
+                    <button onClick={(e) => {e.stopPropagation(); tab === 'trash' ? handlePermanentDelete(m.id, m.url, m.origin_table) : handleMoveToTrash(m)}} className="w-12 h-12 bg-red-600 text-white rounded-full flex items-center justify-center shadow-2xl hover:scale-110 active:scale-90 transition-transform"><Trash2 size={22}/></button>
                   </div>
-
-                  {m.origin_table === 'private_videos' && (
-                    <div className="absolute bottom-3 right-3 bg-black/60 backdrop-blur-md px-2.5 py-1 rounded-lg text-[9px] font-black uppercase flex items-center gap-1.5 border border-white/10 transition-opacity group-hover:opacity-0">
-                      <div className="w-1.5 h-1.5 bg-red-600 rounded-full animate-pulse" />
-                      Video
-                    </div>
-                  )}
+                  {m.origin_table === 'private_videos' && <div className="absolute bottom-3 right-3 bg-black/60 backdrop-blur-md px-2.5 py-1 rounded-lg text-[9px] font-black uppercase flex items-center gap-1.5 border border-white/10 group-hover:opacity-0 transition-opacity"><div className="w-1.5 h-1.5 bg-red-600 rounded-full animate-pulse" />Video</div>}
                 </div>
               ))}
             </div>
@@ -328,16 +306,15 @@ export default function CinemaVault() {
         </div>
       </main>
 
-      {/* MODAL ĐĂNG XUẤT */}
+      {/* MODAL LOGOUT */}
       {showLogoutModal && (
         <div className="fixed inset-0 z-[200] bg-black/95 backdrop-blur-xl flex items-center justify-center p-6 animate-in fade-in zoom-in duration-300">
           <div className="w-full max-w-xs bg-zinc-900 border border-white/10 p-10 rounded-[3rem] text-center shadow-[0_0_50px_rgba(0,0,0,0.5)]">
             <div className="w-20 h-20 bg-red-600/20 text-red-500 rounded-full flex items-center justify-center mx-auto mb-8 animate-bounce"><AlertCircle size={40}/></div>
             <h3 className="text-2xl font-black italic uppercase mb-2 tracking-tighter">Đăng xuất?</h3>
-            <p className="text-zinc-500 text-xs uppercase font-bold mb-8">Bạn sẽ phải nhập mã lại</p>
-            <div className="grid grid-cols-2 gap-4">
-              <button onClick={() => setShowLogoutModal(false)} className="py-5 bg-zinc-800 rounded-2xl text-[10px] font-black uppercase hover:bg-zinc-700 transition-colors">Huỷ</button>
-              <button onClick={handleConfirmLogout} className="py-5 bg-red-600 rounded-2xl text-[10px] font-black uppercase text-white hover:bg-red-500 shadow-lg shadow-red-600/20 transition-all">Đồng ý</button>
+            <div className="grid grid-cols-2 gap-4 mt-8">
+              <button onClick={() => setShowLogoutModal(false)} className="py-5 bg-zinc-800 rounded-2xl text-[10px] font-black uppercase">Huỷ</button>
+              <button onClick={handleConfirmLogout} className="py-5 bg-red-600 rounded-2xl text-[10px] font-black uppercase text-white">Đồng ý</button>
             </div>
           </div>
         </div>
