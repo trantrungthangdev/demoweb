@@ -31,7 +31,7 @@ export default function CinemaVault() {
   const [longPressedId, setLongPressedId] = useState<string | null>(null);
   const touchTimer = useRef<any>(null);
 
-  // --- STATES PLAYER (CẤM XOÁ - GIỮ NGUYÊN 100%) ---
+  // --- STATES PLAYER (GIỮ NGUYÊN 100%) ---
   const [isPlaying, setIsPlaying] = useState<boolean>(true);
   const [playbackRate, setPlaybackRate] = useState<number>(1);
   const [currentTime, setCurrentTime] = useState<number>(0);
@@ -42,11 +42,13 @@ export default function CinemaVault() {
   const playerContainerRef = useRef<HTMLDivElement>(null);
   const controlsTimeoutRef = useRef<any>(null);
 
+  const isVideoFile = (url: string) => url?.match(/\.(mp4|webm|ogg|mov|m4v)/i);
+
   const sanitizeFileName = (name: string) => {
     return name.normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^\x00-\x7F]/g, '').replace(/\s+/g, '_').replace(/[^a-zA-Z0-9._-]/g, '');
   };
 
-  // --- FETCH DỮ LIỆU (GIỮ NGUYÊN LOGIC) ---
+  // --- FETCH DỮ LIỆU (GIỮ NGUYÊN) ---
   const fetchMedia = useCallback(async () => {
     if (type === 'library') return;
     setIsLoading(true);
@@ -104,7 +106,7 @@ export default function CinemaVault() {
     setUploading(false); fetchMedia();
   };
 
-  // --- ACTIONS: THÙNG RÁC (GIỮ NGUYÊN) ---
+  // --- ACTIONS: THÙNG RÁC (GIỮ NGUYÊN LOGIC CỦA BẠN) ---
   const handleMoveToTrash = async (item: any) => {
     setIsLoading(true);
     const isImg = item.origin_table === 'private_images';
@@ -155,6 +157,7 @@ export default function CinemaVault() {
     }
   };
 
+  // --- PLAYER LOGIC (GIỮ NGUYÊN) ---
   const togglePlay = () => { if (videoRef.current) { if (videoRef.current.paused) { videoRef.current.play(); setIsPlaying(true); } else { videoRef.current.pause(); setIsPlaying(false); } } };
   const skipTime = (amount: number) => { if (videoRef.current) videoRef.current.currentTime += amount; };
   const handleUserActivity = () => { setShowControls(true); if (controlsTimeoutRef.current) clearTimeout(controlsTimeoutRef.current); controlsTimeoutRef.current = setTimeout(() => { if (isPlaying) setShowControls(false); }, 3000); };
@@ -162,9 +165,9 @@ export default function CinemaVault() {
 
   if (!isLogged) return (
     <div className="h-screen bg-black flex items-center justify-center p-6 text-white select-none">
-      <div className="w-full max-w-sm bg-zinc-900/50 border border-white/5 p-8 rounded-[2.5rem] backdrop-blur-xl">
+      <div className="w-full max-w-sm bg-zinc-900 border border-white/5 p-8 rounded-[2.5rem]">
         <Shield className="text-red-600 mx-auto mb-6" size={48} />
-        <h1 className="text-xl font-black italic uppercase mb-8 text-center tracking-widest">Vault Access</h1>
+        <h1 className="text-xl font-black italic uppercase mb-8 text-center tracking-widest">Cinema Vault</h1>
         <input type="password" autoFocus className="w-full bg-black border border-white/10 p-4 rounded-2xl text-center text-white text-2xl tracking-[0.5em] outline-none focus:border-red-600" onKeyDown={(e) => { if (e.key === 'Enter' && (e.target as any).value === ACCESS_KEY) { setIsLogged(true); localStorage.setItem('vault_logged_in', 'true'); }}} />
       </div>
     </div>
@@ -174,21 +177,23 @@ export default function CinemaVault() {
     <div className="flex h-[100dvh] w-full bg-[#070707] text-zinc-100 font-sans overflow-hidden select-none flex-col md:flex-row">
       {(isLoading || uploading) && <div className="fixed top-0 left-0 right-0 h-1 z-[110] bg-zinc-800"><div className="h-full bg-red-600 transition-all" style={{ width: uploading ? `${uploadProgress}%` : '50%' }}></div></div>}
 
-      {/* NAV (BOTTOM ON MOBILE, SIDE ON PC) */}
+      {/* NAV GIAO DIỆN CŨ (SIDEBAR) */}
       <nav className="order-2 md:order-1 flex-none h-16 md:h-full w-full md:w-20 lg:w-64 bg-zinc-900 md:bg-black border-t md:border-t-0 md:border-r border-white/5 flex md:flex-col items-center justify-around md:justify-start md:pt-10 z-[60]">
         <div className="hidden md:flex mb-10"><Shield className="text-red-600" size={32} /></div>
         <NavItem active={type === 'video' && tab === 'main'} onClick={() => {setType('video'); setTab('main');}} icon={<Film size={22}/>} label="Phim" />
         <NavItem active={type === 'image' && tab === 'main'} onClick={() => {setType('image'); setTab('main');}} icon={<ImageIcon size={22}/>} label="Ảnh" />
         <NavItem active={type === 'library' || tab === 'trash'} onClick={() => setType('library')} icon={<Library size={22}/>} label="Thư viện" />
-        <button onClick={() => setShowLogoutModal(true)} className="p-4 text-zinc-500 hover:text-red-500"><LogOut size={22}/></button>
+        <button onClick={() => setShowLogoutModal(true)} className="p-4 text-zinc-500 hover:text-red-500 transition-colors"><LogOut size={22}/></button>
       </nav>
 
       {/* MAIN CONTENT AREA */}
       <main className="order-1 md:order-2 flex-1 flex flex-col min-w-0 h-full overflow-hidden">
-        <header className="px-5 py-4 flex items-center justify-between bg-black/50 backdrop-blur-md border-b border-white/5">
-          <h2 className="text-lg font-black italic uppercase text-zinc-400 tracking-tighter">{tab === 'trash' ? 'Thùng rác' : (type === 'video' ? 'Phim' : 'Ảnh')}</h2>
-          <label className="bg-white text-black px-4 py-2 rounded-xl text-[10px] font-black uppercase flex items-center gap-2 active:scale-95 transition-transform">
-            {uploading ? <Loader2 className="animate-spin" size={14}/> : <Plus size={16}/>}
+        <header className="px-6 py-5 flex items-center justify-between bg-black/80 backdrop-blur-md border-b border-white/5 sticky top-0 z-40">
+          <h2 className="text-xl font-black italic uppercase text-zinc-400 tracking-wider">
+            {tab === 'trash' ? 'Thùng rác' : (type === 'video' ? 'Phim' : 'Ảnh')}
+          </h2>
+          <label className="bg-white text-black px-5 py-2 rounded-xl text-xs font-black uppercase flex items-center gap-2 active:scale-95 transition-transform cursor-pointer shadow-lg">
+            {uploading ? <Loader2 className="animate-spin" size={16}/> : <Plus size={18}/>}
             <span>{uploading ? `${uploadProgress}%` : 'Tải lên'}</span>
             <input type="file" multiple className="hidden" onChange={handleFileUpload} accept="video/*,image/*" disabled={uploading} />
           </label>
@@ -196,17 +201,21 @@ export default function CinemaVault() {
 
         <div className="flex-1 overflow-y-auto p-4 md:p-8 custom-scroll">
           {type === 'library' ? (
-            <div className="max-w-md mx-auto py-10">
-              <div onClick={() => {setTab('trash'); setType('video');}} className="p-6 bg-zinc-900/50 rounded-3xl border border-white/5 flex items-center justify-between group active:bg-zinc-800">
-                <div className="flex items-center gap-4">
-                  <div className="w-12 h-12 bg-red-600/10 text-red-500 rounded-2xl flex items-center justify-center"><Trash2 size={24}/></div>
-                  <p className="font-black uppercase italic">Thùng rác</p>
+            <div className="max-w-2xl mx-auto py-10">
+              <div onClick={() => {setTab('trash'); setType('video');}} className="p-8 bg-zinc-900/50 rounded-[2.5rem] border border-white/5 flex items-center justify-between group cursor-pointer hover:bg-zinc-800 transition-all">
+                <div className="flex items-center gap-6">
+                  <div className="w-16 h-16 bg-red-600/10 text-red-500 rounded-2xl flex items-center justify-center"><Trash2 size={28}/></div>
+                  <div>
+                    <p className="text-lg font-black uppercase italic">Thùng rác</p>
+                    <p className="text-[10px] text-zinc-500 uppercase tracking-widest">{media.length} tệp</p>
+                  </div>
                 </div>
-                <ChevronRight className="text-zinc-600"/>
+                <ChevronRight className="text-zinc-600 group-hover:text-red-500 transition-colors"/>
               </div>
             </div>
           ) : (
-            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 xl:grid-cols-6 gap-3 md:gap-4">
+            <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-3 md:gap-5">
+              {media.length === 0 && !isLoading && <div className="col-span-full py-40 text-center opacity-10 uppercase font-black italic text-6xl text-white select-none">Trống trơn</div>}
               {media.map((m) => (
                 <div key={m.id} 
                   onContextMenu={(e) => e.preventDefault()}
@@ -215,18 +224,19 @@ export default function CinemaVault() {
                   onMouseDown={() => touchTimer.current = setTimeout(() => setLongPressedId(m.id), 500)}
                   onMouseUp={() => clearTimeout(touchTimer.current)}
                   onClick={() => setViewing(m)}
-                  className="relative aspect-[3/4] bg-zinc-900 rounded-2xl overflow-hidden group border border-white/5"
+                  className="relative aspect-[3/4] bg-zinc-900 rounded-2xl overflow-hidden group border border-white/5 transition-all hover:border-white/20 shadow-xl"
                 >
                   {m.origin_table === 'private_videos' ? (
-                    <video src={`${m.url}#t=0.5`} className="w-full h-full object-cover" muted playsInline preload="metadata" />
+                    <video src={`${m.url}#t=0.5`} className="w-full h-full object-cover pointer-events-none" muted playsInline preload="metadata" />
                   ) : (
                     <img src={m.url} className="w-full h-full object-cover" loading="lazy" />
                   )}
-                  <div className={`absolute inset-0 bg-black/60 flex items-center justify-center gap-4 transition-opacity ${longPressedId === m.id ? 'opacity-100' : 'opacity-0 md:group-hover:opacity-100'}`}>
-                    {tab === 'trash' && <button onClick={(e) => {e.stopPropagation(); handleRestore(m)}} className="w-10 h-10 bg-white text-black rounded-full flex items-center justify-center"><RotateCcw size={20}/></button>}
-                    <button onClick={(e) => {e.stopPropagation(); tab === 'trash' ? handlePermanentDelete(m.id, m.url, m.origin_table) : handleMoveToTrash(m)}} className="w-10 h-10 bg-red-600 text-white rounded-full flex items-center justify-center"><Trash2 size={20}/></button>
+                  {/* OVERLAY HOVER/LONGPRESS */}
+                  <div className={`absolute inset-0 bg-black/70 backdrop-blur-[2px] flex items-center justify-center gap-4 transition-all duration-300 ${longPressedId === m.id ? 'opacity-100 visible' : 'opacity-0 invisible md:group-hover:opacity-100 md:group-hover:visible'}`}>
+                    {tab === 'trash' && <button onClick={(e) => {e.stopPropagation(); handleRestore(m)}} className="w-12 h-12 bg-white text-black rounded-full flex items-center justify-center hover:scale-110 active:scale-90 transition-transform"><RotateCcw size={22}/></button>}
+                    <button onClick={(e) => {e.stopPropagation(); tab === 'trash' ? handlePermanentDelete(m.id, m.url, m.origin_table) : handleMoveToTrash(m)}} className="w-12 h-12 bg-red-600 text-white rounded-full flex items-center justify-center hover:scale-110 active:scale-90 transition-transform"><Trash2 size={22}/></button>
                   </div>
-                  {m.origin_table === 'private_videos' && <div className="absolute bottom-2 right-2 bg-black/60 px-2 py-1 rounded-lg text-[8px] font-black uppercase flex items-center gap-1"><Play size={8} fill="currentColor"/> Video</div>}
+                  {m.origin_table === 'private_videos' && <div className="absolute bottom-3 right-3 bg-black/60 backdrop-blur-md px-2.5 py-1 rounded-lg text-[9px] font-black uppercase flex items-center gap-1.5 border border-white/10 group-hover:opacity-0 transition-opacity"><Play size={8} fill="currentColor"/> Video</div>}
                 </div>
               ))}
             </div>
@@ -234,15 +244,18 @@ export default function CinemaVault() {
         </div>
       </main>
 
-      {/* PLAYER MODAL - MOBILE OPTIMIZED (KHÔNG CÒN BỊ NÁT) */}
+      {/* PLAYER MODAL (GIAO DIỆN CŨ + FIX MOBILE NÁT) */}
       {viewing && (
-        <div className="fixed inset-0 z-[100] bg-black flex flex-col" onMouseMove={handleUserActivity} onClick={handleUserActivity}>
-          {/* HEADER TRONG PLAYER: Đã tách riêng ra khỏi nội dung để không bị đè */}
-          <header className={`absolute top-0 inset-x-0 z-[110] flex justify-between items-center p-4 bg-gradient-to-b from-black/80 to-transparent transition-opacity duration-500 ${showControls ? 'opacity-100' : 'opacity-0 invisible'}`}>
-            <h2 className="text-xs font-black uppercase italic truncate max-w-[60%] text-zinc-100">{viewing.name}</h2>
-            <div className="flex gap-2">
-              <button onClick={(e) => {e.stopPropagation(); tab === 'trash' ? handlePermanentDelete(viewing.id, viewing.url, viewing.origin_table) : handleMoveToTrash(viewing); setViewing(null);}} className="w-9 h-9 bg-red-600 text-white rounded-xl flex items-center justify-center"><Trash2 size={18}/></button>
-              <button onClick={() => setViewing(null)} className="w-9 h-9 bg-white/10 text-white rounded-xl flex items-center justify-center"><X size={20}/></button>
+        <div className="fixed inset-0 z-[100] bg-black flex flex-col animate-in fade-in duration-300" onMouseMove={handleUserActivity} onClick={handleUserActivity}>
+          <header className={`absolute top-0 inset-x-0 z-[110] flex justify-between items-center p-5 md:p-8 bg-gradient-to-b from-black/90 to-transparent transition-opacity duration-500 ${showControls ? 'opacity-100' : 'opacity-0 invisible'}`}>
+            <div className="flex items-center gap-4 overflow-hidden mr-4">
+              <div className="w-1 h-8 bg-red-600 rounded-full shrink-0 shadow-[0_0_10px_rgba(220,38,38,0.5)]" />
+              <h2 className="text-sm md:text-xl font-black uppercase italic truncate max-w-[150px] md:max-w-none text-zinc-100 tracking-tight">{viewing.name.replace('_trash','')}</h2>
+            </div>
+            <div className="flex gap-2 shrink-0">
+              <button onClick={(e) => {e.stopPropagation(); tab === 'trash' ? handlePermanentDelete(viewing.id, viewing.url, viewing.origin_table) : handleMoveToTrash(viewing); setViewing(null);}} className="w-10 h-10 md:w-14 md:h-14 bg-red-600/20 text-red-500 rounded-xl flex items-center justify-center transition-all hover:bg-red-600 hover:text-white"><Trash2 size={24}/></button>
+              <a href={viewing.url} download className="w-10 h-10 md:w-14 md:h-14 bg-white/10 text-white rounded-xl flex items-center justify-center hover:bg-white/20"><Download size={24}/></a>
+              <button onClick={() => setViewing(null)} className="w-10 h-10 md:w-14 md:h-14 bg-white/10 text-white rounded-xl flex items-center justify-center hover:bg-red-600"><X size={24}/></button>
             </div>
           </header>
 
@@ -255,26 +268,25 @@ export default function CinemaVault() {
                   onClick={(e) => {e.stopPropagation(); togglePlay();}} 
                 />
                 
-                {/* CONTROLS TRONG PLAYER: Fix khoảng cách để ngón tay dễ bấm */}
                 <div className={`absolute inset-x-0 bottom-0 p-6 md:p-12 bg-gradient-to-t from-black/90 to-transparent transition-opacity duration-500 ${showControls ? 'opacity-100' : 'opacity-0 invisible'}`}>
-                  <div className="flex items-center gap-3 mb-6">
-                    <span className="text-[10px] font-mono text-zinc-400 w-10">{formatTime(currentTime)}</span>
-                    <input type="range" min="0" max={duration || 0} step="0.1" value={currentTime} onChange={(e) => {if(videoRef.current) videoRef.current.currentTime = parseFloat(e.target.value)}} className="flex-1 h-1 bg-zinc-800 rounded-full appearance-none accent-red-600" />
-                    <span className="text-[10px] font-mono text-zinc-400 w-10">{formatTime(duration)}</span>
+                  <div className="flex items-center gap-4 mb-8">
+                    <span className="text-[10px] md:text-xs font-black text-zinc-400 w-12 text-right">{formatTime(currentTime)}</span>
+                    <input type="range" min="0" max={duration || 0} step="0.1" value={currentTime} onChange={(e) => {if(videoRef.current) videoRef.current.currentTime = parseFloat(e.target.value)}} className="flex-1 h-1.5 bg-zinc-800 rounded-full appearance-none cursor-pointer accent-red-600" />
+                    <span className="text-[10px] md:text-xs font-black text-zinc-400 w-12">{formatTime(duration)}</span>
                   </div>
                   
                   <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-8 text-white">
-                      <button onClick={(e) => {e.stopPropagation(); skipTime(-10);}}><Rewind size={24}/></button>
-                      <button onClick={(e) => {e.stopPropagation(); togglePlay();}} className="bg-white/10 p-4 rounded-full">{isPlaying ? <Pause size={32} fill="currentColor"/> : <Play size={32} fill="currentColor"/>}</button>
-                      <button onClick={(e) => {e.stopPropagation(); skipTime(10);}}><FastForward size={24}/></button>
+                    <div className="flex items-center gap-6 md:gap-10 text-white">
+                      <button onClick={(e) => {e.stopPropagation(); skipTime(-10);}} className="hover:text-red-500 transition-colors"><Rewind size={28}/></button>
+                      <button onClick={(e) => {e.stopPropagation(); togglePlay();}} className="bg-white/5 p-4 rounded-full border border-white/10 hover:scale-110 transition-transform">{isPlaying ? <Pause size={36} fill="currentColor"/> : <Play size={36} fill="currentColor"/>}</button>
+                      <button onClick={(e) => {e.stopPropagation(); skipTime(10);}} className="hover:text-red-500 transition-colors"><FastForward size={28}/></button>
                     </div>
                     
-                    <div className="flex items-center gap-4">
-                      <div className="flex bg-zinc-900 rounded-lg p-1">
-                        {[1, 1.5, 2].map(s => (<button key={s} onClick={(e) => {e.stopPropagation(); if(videoRef.current) videoRef.current.playbackRate = s; setPlaybackRate(s);}} className={`px-2 py-1 text-[10px] font-black rounded ${playbackRate === s ? 'bg-red-600 text-white' : 'text-zinc-500'}`}>{s}x</button>))}
+                    <div className="flex items-center gap-5">
+                      <div className="flex bg-zinc-900/80 rounded-xl p-1 border border-white/10">
+                        {[1, 1.5, 2].map(s => (<button key={s} onClick={(e) => {e.stopPropagation(); if(videoRef.current) videoRef.current.playbackRate = s; setPlaybackRate(s);}} className={`px-4 py-1.5 text-[10px] md:text-xs font-black rounded-lg transition-all ${playbackRate === s ? 'bg-red-600 text-white shadow-lg' : 'text-zinc-500 hover:text-white'}`}>{s}x</button>))}
                       </div>
-                      <button onClick={(e) => {e.stopPropagation(); if(!document.fullscreenElement) playerContainerRef.current?.requestFullscreen(); else if(document.exitFullscreen) document.exitFullscreen();}}><Maximize size={20}/></button>
+                      <button onClick={(e) => {e.stopPropagation(); if(!document.fullscreenElement) playerContainerRef.current?.requestFullscreen(); else if(document.exitFullscreen) document.exitFullscreen();}} className="text-zinc-400 hover:text-white"><Maximize size={24}/></button>
                     </div>
                   </div>
                 </div>
@@ -284,24 +296,26 @@ export default function CinemaVault() {
         </div>
       )}
 
-      {/* MODAL ĐĂNG XUẤT (GIỮ NGUYÊN) */}
+      {/* MODAL LOGOUT (GIAO DIỆN CŨ) */}
       {showLogoutModal && (
-        <div className="fixed inset-0 z-[200] bg-black/90 backdrop-blur-md flex items-center justify-center p-6">
-          <div className="w-full max-w-xs bg-zinc-900 p-8 rounded-[2.5rem] text-center">
-            <AlertCircle className="text-red-500 mx-auto mb-4" size={40}/>
-            <p className="font-black uppercase italic mb-6">Thoát Vault?</p>
-            <div className="flex gap-3">
-              <button onClick={() => setShowLogoutModal(false)} className="flex-1 py-4 bg-zinc-800 rounded-2xl text-[10px] font-black uppercase">Huỷ</button>
-              <button onClick={handleConfirmLogout} className="flex-1 py-4 bg-red-600 rounded-2xl text-[10px] font-black uppercase text-white">Có</button>
+        <div className="fixed inset-0 z-[200] bg-black/95 backdrop-blur-xl flex items-center justify-center p-6 animate-in fade-in zoom-in duration-300">
+          <div className="w-full max-w-xs bg-zinc-900 border border-white/10 p-10 rounded-[3rem] text-center shadow-2xl">
+            <AlertCircle className="text-red-500 mx-auto mb-8 animate-bounce" size={48}/>
+            <h3 className="text-2xl font-black italic uppercase mb-2 tracking-tighter">Đăng xuất?</h3>
+            <div className="grid grid-cols-2 gap-4 mt-8">
+              <button onClick={() => setShowLogoutModal(false)} className="py-5 bg-zinc-800 rounded-2xl text-[10px] font-black uppercase hover:bg-zinc-700 transition-colors">Huỷ</button>
+              <button onClick={handleConfirmLogout} className="py-5 bg-red-600 rounded-2xl text-[10px] font-black uppercase text-white hover:bg-red-500 shadow-lg shadow-red-600/20 transition-all">Có</button>
             </div>
           </div>
         </div>
       )}
 
       <style>{`
-        .custom-scroll::-webkit-scrollbar { width: 3px; }
-        .custom-scroll::-webkit-scrollbar-thumb { background: #27272a; border-radius: 10px; }
-        input[type='range']::-webkit-slider-thumb { appearance: none; width: 12px; height: 12px; background: #dc2626; border-radius: 50%; cursor: pointer; }
+        ::-webkit-scrollbar { width: 4px; }
+        ::-webkit-scrollbar-thumb { background: #3f3f46; border-radius: 10px; }
+        ::-webkit-scrollbar-track { background: transparent; }
+        .custom-scroll { scrollbar-gutter: stable; }
+        input[type='range']::-webkit-slider-thumb { appearance: none; width: 14px; height: 14px; background: #dc2626; border-radius: 50%; cursor: pointer; box-shadow: 0 0 10px rgba(220,38,38,0.5); }
       `}</style>
     </div>
   );
@@ -309,10 +323,10 @@ export default function CinemaVault() {
 
 function NavItem({ active, onClick, icon, label }: any) {
   return (
-    <button onClick={onClick} className={`flex flex-col md:flex-row items-center gap-1 md:gap-4 p-2 md:p-4 rounded-2xl transition-all w-full md:mb-2 relative ${active ? 'bg-red-600/10 text-red-500' : 'text-zinc-500 hover:text-white'}`}>
-      {icon}
-      <span className="text-[8px] md:text-xs font-black uppercase italic lg:block hidden">{label}</span>
-      {active && <div className="absolute right-0 w-1 h-8 bg-red-600 rounded-l-full hidden lg:block" />}
+    <button onClick={onClick} className={`flex flex-col md:flex-row items-center gap-1 md:gap-5 p-3 md:p-5 rounded-[1.5rem] transition-all w-full relative group ${active ? 'bg-red-600/10 text-red-500 shadow-[inset_0_0_20px_rgba(220,38,38,0.05)]' : 'text-zinc-600 hover:text-white hover:bg-white/5'}`}>
+      <div className={`transition-transform duration-300 ${active ? 'scale-110' : 'group-hover:scale-110'}`}>{icon}</div>
+      <span className="text-[9px] md:text-xs font-black uppercase italic lg:block hidden tracking-widest">{label}</span>
+      {active && <div className="absolute right-0 w-1.5 h-10 bg-red-600 rounded-l-full hidden lg:block shadow-[0_0_15px_rgba(220,38,38,0.5)]" />}
     </button>
   );
 }
