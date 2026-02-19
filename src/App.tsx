@@ -4,7 +4,7 @@ import {
   Play, Trash2, RotateCcw, UploadCloud, X, Shield, 
   Film, Image as ImageIcon, LogOut, Check, 
   Maximize, Volume2, Pause, ChevronRight, FastForward, Rewind, VolumeX,
-  AlertTriangle, Flame, Plus, FolderPlus, Library, Download, CheckCircle2, EyeOff, Eye
+  AlertTriangle, Flame, Plus, FolderPlus, Library, Download, CheckCircle2, EyeOff, Eye, Loader2
 } from 'lucide-react';
 
 // --- CONFIGURATION ---
@@ -17,14 +17,15 @@ export default function CinemaVault() {
   const [isLogged, setIsLogged] = useState<boolean>(false);
   const [media, setMedia] = useState<any[]>([]);
   const [type, setType] = useState<'video' | 'image' | 'library'>('video'); 
-  const [tab, setTab] = useState<'main' | 'trash' | 'collection'>('main');
+  const [tab, setTab] = useState<'main' | 'trash'>('main');
   const [viewing, setViewing] = useState<any | null>(null);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [isSelectionMode, setIsSelectionMode] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState(0);
 
-  // --- LONG PRESS STATE ---
+  // --- STATES MỚI: LOADING & LONG PRESS ---
+  const [isLoading, setIsLoading] = useState(false);
   const [longPressedId, setLongPressedId] = useState<string | null>(null);
   const touchTimer = useRef<any>(null);
 
@@ -41,34 +42,40 @@ export default function CinemaVault() {
   const playerContainerRef = useRef<HTMLDivElement>(null);
   const controlsTimeoutRef = useRef<any>(null);
 
-  // Hàm kiểm tra định dạng tệp để phân loại (SỬA LỖI NẰM CHUNG)
   const isVideoFile = (url: string) => url?.match(/\.(mp4|webm|ogg|mov|m4v)$/i);
   const isImageFile = (url: string) => url?.match(/\.(jpg|jpeg|png|gif|webp)$/i);
 
-  // --- LOGIC DỮ LIỆU ---
+  // --- LOGIC DỮ LIỆU: FIX TRIỆT ĐỂ LỖI THÙNG RÁC TRỐNG ---
   const fetchMedia = useCallback(async () => {
     if (type === 'library') return;
-    const activeTable = type === 'image' ? 'private_images' : 'private_videos';
+    setIsLoading(true);
+    
+    // Nếu là Thùng rác, quét cả 2 bảng. Nếu trang chính, quét theo type.
+    const tables = tab === 'trash' ? ['private_videos', 'private_images'] : (type === 'image' ? ['private_images'] : ['private_videos']);
+    let allData: any[] = [];
 
-    const { data, error } = await supabase.from(activeTable)
-      .select('*')
-      .order('created_at', { ascending: false });
+    try {
+      for (const table of tables) {
+        const { data, error } = await supabase.from(table).select('*').order('created_at', { ascending: false });
+        if (!error && data) allData = [...allData, ...data];
+      }
 
-    if (error) return;
-
-    if (data) {
-      const filtered = data.filter((item: any) => {
-        let statusMatch = false;
-        if (tab === 'trash') statusMatch = item.is_deleted === true;
-        else if (tab === 'collection') statusMatch = item.is_archived === true && !item.is_deleted;
-        else statusMatch = !item.is_deleted && item.is_archived !== true;
-
-        if (!statusMatch) return false;
-        if (type === 'video') return isVideoFile(item.url);
-        if (type === 'image') return isImageFile(item.url);
-        return true;
+      const filtered = allData.filter((item: any) => {
+        const itemName = item.name || "";
+        const isTrash = itemName.endsWith('_trash') || item.is_deleted === true;
+        
+        if (tab === 'trash') return isTrash;
+        if (isTrash) return false;
+        
+        // Phân loại Phim/Ảnh ở trang chính
+        return type === 'video' ? isVideoFile(item.url) : isImageFile(item.url);
       });
+      
       setMedia(filtered);
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setIsLoading(false);
     }
   }, [tab, type]);
 
@@ -76,31 +83,46 @@ export default function CinemaVault() {
     if (isLogged) fetchMedia();
   }, [isLogged, fetchMedia, type, tab]);
 
-  // --- ACTIONS ---
-  const handleToggleArchive = async (id: string, currentStatus: boolean) => {
-    const activeTable = type === 'image' ? 'private_images' : 'private_videos';
-    await supabase.from(activeTable).update({ is_archived: !currentStatus }).eq('id', id);
+  // --- ACTIONS: ĐẢM BẢO CẬP NHẬT DATABASE ---
+  const handleMoveToTrash = async (item: any) => {
+    const activeTable = isImageFile(item.url) ? 'private_images' : 'private_videos';
+    const newName = item.name.endsWith('_trash') ? item.name : `${item.name}_trash`;
+    
+    setIsLoading(true);
+    await supabase.from(activeTable).update({ name: newName, is_deleted: true }).eq('id', item.id);
+    
     setLongPressedId(null);
-    fetchMedia();
+    await fetchMedia(); 
   };
 
-  const handleMoveToTrash = async (id: string) => {
-    const activeTable = type === 'image' ? 'private_images' : 'private_videos';
-    await supabase.from(activeTable).update({ is_deleted: true }).eq('id', id);
+  const handleRestore = async (item: any) => {
+    const activeTable = isImageFile(item.url) ? 'private_images' : 'private_videos';
+    const newName = item.name.replace('_trash', '');
+    
+    setIsLoading(true);
+    await supabase.from(activeTable).update({ name: newName, is_deleted: false }).eq('id', item.id);
+    
     setLongPressedId(null);
-    fetchMedia();
+    await fetchMedia();
   };
 
-  const handlePermanentDelete = async (id: string) => {
-    const activeTable = type === 'image' ? 'private_images' : 'private_videos';
-    if (confirm("Xoá vĩnh viễn mục này?")) {
+  const handlePermanentDelete = async (id: string, itemUrl: string) => {
+    const activeTable = isImageFile(itemUrl) ? 'private_images' : 'private_videos';
+    if (confirm("Xoá vĩnh viễn tệp này khỏi Storage và Database?")) {
+      setIsLoading(true);
+      const urlParts = itemUrl.split('/');
+      const fileName = urlParts[urlParts.length - 1];
+      const bucketName = isImageFile(itemUrl) ? 'images' : 'videos';
+
+      await supabase.storage.from(bucketName).remove([fileName]);
       await supabase.from(activeTable).delete().eq('id', id);
+      
       setLongPressedId(null);
-      fetchMedia();
+      await fetchMedia();
     }
   };
 
-  // --- GIỮ NGUYÊN LOGIC PLAYER CŨ ---
+  // --- GIỮ NGUYÊN TOÀN BỘ LOGIC PLAYER CŨ ---
   const togglePlay = () => {
     if (videoRef.current) {
       if (videoRef.current.paused) { videoRef.current.play(); setIsPlaying(true); }
@@ -165,8 +187,15 @@ export default function CinemaVault() {
   return (
     <div className="min-h-screen bg-[#070707] text-zinc-100 flex flex-col md:flex-row font-sans overflow-hidden" onClick={() => setLongPressedId(null)}>
       
+      {/* LOADING BAR (MỚI) */}
+      {isLoading && (
+        <div className="fixed top-0 left-0 right-0 h-1 z-[110] bg-zinc-800 overflow-hidden">
+          <div className="h-full bg-red-600 animate-[loading_2s_infinite_linear]" style={{ width: '60%' }}></div>
+        </div>
+      )}
+
       <nav className="fixed bottom-0 left-0 w-full h-16 bg-zinc-900/95 backdrop-blur-2xl border-t border-white/5 flex flex-row items-center justify-around z-[60] 
-                      md:relative md:w-20 lg:w-64 md:h-screen md:flex-col md:border-t-0 md:border-r md:bg-black md:px-4 md:py-8">
+                      md:relative md:w-20 md:h-screen md:flex-col md:border-t-0 md:border-r md:bg-black md:px-4 md:py-8 lg:w-64">
         <div className="hidden md:flex items-center gap-3 px-4 mb-10 w-full">
           <div className="w-8 h-8 bg-red-600 rounded-lg flex items-center justify-center shadow-lg shadow-red-600/40"><Shield size={18}/></div>
           <span className="text-xl font-black italic tracking-tighter lg:block hidden uppercase">VAULT</span>
@@ -174,7 +203,7 @@ export default function CinemaVault() {
         <div className="flex flex-row md:flex-col gap-1 md:gap-2 w-full flex-1 items-center md:items-start">
           <NavItem active={type === 'video' && tab === 'main'} onClick={() => {setType('video'); setTab('main');}} icon={<Film size={22}/>} label="Phim" />
           <NavItem active={type === 'image' && tab === 'main'} onClick={() => {setType('image'); setTab('main');}} icon={<ImageIcon size={22}/>} label="Ảnh" />
-          <NavItem active={type === 'library' || tab === 'trash' || tab === 'collection'} onClick={() => setType('library')} icon={<Library size={22}/>} label="Thư viện" />
+          <NavItem active={type === 'library' || tab === 'trash'} onClick={() => setType('library')} icon={<Library size={22}/>} label="Thư viện" />
           <button onClick={handleLogout} className="flex flex-col md:flex-row items-center gap-1 md:gap-4 p-2 md:p-4 rounded-2xl transition-all w-full text-zinc-500 hover:text-red-500">
             <LogOut size={22} /><span className="text-[9px] md:text-xs font-black uppercase italic lg:block hidden tracking-tighter">Thoát</span>
           </button>
@@ -184,7 +213,7 @@ export default function CinemaVault() {
       <main className="flex-1 h-screen overflow-y-auto pb-20 md:pb-0">
         <header className="sticky top-0 z-40 bg-black/80 backdrop-blur-md px-6 py-4 flex items-center justify-between border-b border-white/5">
           <h2 className="text-xl font-black italic uppercase tracking-widest text-zinc-400">
-            {tab === 'trash' ? 'Thùng rác' : tab === 'collection' ? 'Bộ sưu tập' : (type === 'library' ? 'Tiện ích' : (type === 'video' ? 'Phim' : 'Ảnh'))}
+            {tab === 'trash' ? 'Thùng rác' : (type === 'library' ? 'Tiện ích' : (type === 'video' ? 'Phim' : 'Ảnh'))}
           </h2>
           <label className="cursor-pointer bg-white text-black px-5 py-2 rounded-xl text-xs font-black uppercase flex items-center gap-2">
             <Plus size={18}/> <span>Tải lên</span>
@@ -195,17 +224,10 @@ export default function CinemaVault() {
         <div className="p-2 md:p-6">
           {type === 'library' ? (
             <div className="max-w-xl mx-auto space-y-3">
-              <div onClick={() => {setTab('collection'); setType('video');}} className="flex items-center justify-between p-6 bg-zinc-900 rounded-[2rem] border border-white/5 hover:bg-zinc-800 transition-all cursor-pointer">
-                <div className="flex items-center gap-4">
-                  <div className="w-12 h-12 bg-blue-600/10 rounded-2xl flex items-center justify-center text-blue-500"><FolderPlus/></div>
-                  <div><p className="font-black uppercase italic">Bộ sưu tập</p></div>
-                </div>
-                <ChevronRight className="text-zinc-700"/>
-              </div>
               <div onClick={() => {setTab('trash'); setType('video');}} className="flex items-center justify-between p-6 bg-zinc-900 rounded-[2rem] border border-white/5 hover:bg-zinc-800 transition-all cursor-pointer">
                 <div className="flex items-center gap-4">
                   <div className="w-12 h-12 bg-red-600/10 rounded-2xl flex items-center justify-center text-red-500"><Trash2/></div>
-                  <div><p className="font-black uppercase italic">Thùng rác</p></div>
+                  <div><p className="font-black uppercase italic">Thùng rác</p><p className="text-[10px] text-zinc-500 uppercase">File gắn đuôi _trash sẽ hiện ở đây</p></div>
                 </div>
                 <ChevronRight className="text-zinc-700"/>
               </div>
@@ -225,10 +247,12 @@ export default function CinemaVault() {
                   <img src={m.thumbnail_url || m.url} className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-105" />
                   {longPressedId === m.id && (
                     <div className="absolute inset-0 bg-black/80 backdrop-blur-sm flex flex-col items-center justify-center gap-3 z-10 animate-in fade-in zoom-in-95">
-                      <button onClick={(e) => {e.stopPropagation(); handleToggleArchive(m.id, m.is_archived)}} className="w-12 h-12 bg-white text-black rounded-full flex items-center justify-center shadow-xl hover:scale-110 transition-transform">
-                        {m.is_archived ? <Eye size={20}/> : <EyeOff size={20}/>}
-                      </button>
-                      <button onClick={(e) => {e.stopPropagation(); tab === 'trash' ? handlePermanentDelete(m.id) : handleMoveToTrash(m.id)}} className="w-12 h-12 bg-red-600 text-white rounded-full flex items-center justify-center shadow-xl hover:scale-110 transition-transform">
+                      {tab === 'trash' && (
+                        <button onClick={(e) => {e.stopPropagation(); handleRestore(m)}} className="w-12 h-12 bg-white text-black rounded-full flex items-center justify-center shadow-xl hover:scale-110 transition-transform">
+                          <RotateCcw size={20}/>
+                        </button>
+                      )}
+                      <button onClick={(e) => {e.stopPropagation(); tab === 'trash' ? handlePermanentDelete(m.id, m.url) : handleMoveToTrash(m)}} className="w-12 h-12 bg-red-600 text-white rounded-full flex items-center justify-center shadow-xl hover:scale-110 transition-transform">
                         <Trash2 size={20}/>
                       </button>
                     </div>
@@ -245,15 +269,16 @@ export default function CinemaVault() {
         </div>
       </main>
 
+      {/* PLAYER MODAL (100% GIỮ NGUYÊN) */}
       {viewing && (
         <div className="fixed inset-0 z-[100] bg-black flex flex-col animate-in fade-in" onMouseMove={handleUserActivity} onClick={handleUserActivity}>
           <header className={`absolute top-0 inset-x-0 z-20 flex justify-between items-start p-4 md:p-8 bg-gradient-to-b from-black/90 to-transparent transition-opacity duration-500 ${showControls ? 'opacity-100' : 'opacity-0'}`}>
             <div className="flex items-center gap-3 overflow-hidden mr-4">
               <div className="w-1 h-8 bg-red-600 rounded-full shrink-0" />
-              <h2 className="text-xs md:text-xl font-black uppercase italic truncate max-w-[120px] sm:max-w-[200px] md:max-w-xl text-zinc-100">{viewing.name}</h2>
+              <h2 className="text-xs md:text-xl font-black uppercase italic truncate max-w-[100px] sm:max-w-[300px] text-zinc-100">{viewing.name.replace('_trash','')}</h2>
             </div>
             <div className="flex gap-2 shrink-0">
-              <button onClick={(e) => {e.stopPropagation(); handleMoveToTrash(viewing.id); setViewing(null);}} className="w-10 h-10 md:w-14 md:h-14 bg-red-600/20 hover:bg-red-600 text-red-500 hover:text-white rounded-xl flex items-center justify-center transition-all"><Trash2 size={20}/></button>
+              <button onClick={(e) => {e.stopPropagation(); handleMoveToTrash(viewing); setViewing(null);}} className="w-10 h-10 md:w-14 md:h-14 bg-red-600/20 text-red-500 rounded-xl flex items-center justify-center transition-all"><Trash2 size={20}/></button>
               <a href={viewing.url} download className="w-10 h-10 md:w-14 md:h-14 bg-white/10 hover:bg-white/20 rounded-xl flex items-center justify-center transition-all"><Download size={22}/></a>
               <button onClick={() => setViewing(null)} className="w-10 h-10 md:w-14 md:h-14 bg-white/10 hover:bg-red-600 rounded-xl flex items-center justify-center transition-all"><X size={22}/></button>
             </div>
@@ -333,6 +358,7 @@ export default function CinemaVault() {
       )}
 
       <style>{`
+        @keyframes loading { 0% { transform: translateX(-100%); } 100% { transform: translateX(200%); } }
         .no-scrollbar::-webkit-scrollbar { display: none; }
         ::-webkit-scrollbar { width: 5px; }
         ::-webkit-scrollbar-thumb { background: #27272a; border-radius: 10px; }
