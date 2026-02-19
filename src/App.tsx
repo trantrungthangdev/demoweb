@@ -14,24 +14,24 @@ const ACCESS_KEY = '2400H';
 const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
 
 export default function CinemaVault() {
-  // --- STATES ĐĂNG NHẬP (GIỮ NGUYÊN) ---
+  // --- STATES ĐĂNG NHẬP ---
   const [isLogged, setIsLogged] = useState<boolean>(() => localStorage.getItem('vault_logged_in') === 'true');
   const [showLogoutModal, setShowLogoutModal] = useState(false);
 
-  // --- STATES DỮ LIỆU (GIỮ NGUYÊN) ---
+  // --- STATES DỮ LIỆU ---
   const [media, setMedia] = useState<any[]>([]);
   const [type, setType] = useState<'video' | 'image' | 'library'>('video'); 
   const [tab, setTab] = useState<'main' | 'trash'>('main');
   const [viewing, setViewing] = useState<any | null>(null);
   
-  // --- STATES TẢI LÊN & LOADING (GIỮ NGUYÊN) ---
+  // --- STATES TẢI LÊN & LOADING ---
   const [isLoading, setIsLoading] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState(0);
   const [longPressedId, setLongPressedId] = useState<string | null>(null);
   const touchTimer = useRef<any>(null);
 
-  // --- STATES PLAYER (CẤM XOÁ - GIỮ NGUYÊN 100%) ---
+  // --- STATES PLAYER (CẤM XOÁ) ---
   const [isPlaying, setIsPlaying] = useState<boolean>(true);
   const [playbackRate, setPlaybackRate] = useState<number>(1);
   const [currentTime, setCurrentTime] = useState<number>(0);
@@ -229,20 +229,17 @@ export default function CinemaVault() {
                   onMouseDown={() => touchTimer.current = setTimeout(() => setLongPressedId(m.id), 500)}
                   onMouseUp={() => clearTimeout(touchTimer.current)}
                   onClick={() => setViewing(m)}
-                  // Tự động tải trước khi di chuột qua (Hover Preload)
-                  onMouseEnter={(e) => {
-                    if(m.origin_table === 'private_videos') {
-                        const link = document.createElement('link');
-                        link.rel = 'preload';
-                        link.as = 'video';
-                        link.href = m.url;
-                        document.head.appendChild(link);
-                    }
-                  }}
                   className="relative aspect-[3/4] bg-zinc-900 rounded-2xl overflow-hidden group border border-white/5 transition-all hover:border-white/20 shadow-xl"
                 >
                   {m.origin_table === 'private_videos' ? (
-                    <video src={`${m.url}#t=0.5`} className="w-full h-full object-cover pointer-events-none" muted playsInline preload="metadata" crossOrigin="anonymous" />
+                    <video 
+                      src={`${m.url}#t=0.5`} 
+                      className="w-full h-full object-cover pointer-events-none" 
+                      muted 
+                      playsInline 
+                      preload="metadata" // Chỉ tải metadata để tiết kiệm pin/data trên mobile
+                      crossOrigin="anonymous" 
+                    />
                   ) : (
                     <img src={m.url} className="w-full h-full object-cover" loading="lazy" crossOrigin="anonymous" />
                   )}
@@ -283,13 +280,21 @@ export default function CinemaVault() {
                   autoPlay 
                   playsInline 
                   crossOrigin="anonymous" 
-                  className="w-full max-h-full object-contain" 
-                  // Tối ưu hóa tải: preload="auto" để tải tối đa tài nguyên ngay khi mở modal
+                  className="w-full max-h-full object-contain pointer-events-auto"
+                  style={{ transform: 'translateZ(0)' }} // Ép dùng GPU (hardware acceleration)
+                  // Cấu hình tối ưu mobile
                   preload="auto"
+                  controlsList="nodownload"
                   onTimeUpdate={() => setCurrentTime(videoRef.current?.currentTime || 0)} 
                   onLoadedMetadata={() => setDuration(videoRef.current?.duration || 0)} 
                   onClick={(e) => {e.stopPropagation(); togglePlay();}} 
                 />
+                
+                {/* Overlay hiển thị khi đang đệm dữ liệu (Buffering) */}
+                <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+                   {!isPlaying && !currentTime && <Loader2 className="animate-spin text-red-600" size={48}/>}
+                </div>
+
                 <div className={`absolute inset-x-0 bottom-0 p-6 md:p-12 bg-gradient-to-t from-black/95 to-transparent transition-opacity duration-500 ${showControls ? 'opacity-100' : 'opacity-0 invisible'}`}>
                   <div className="flex items-center gap-4 mb-8">
                     <span className="text-[10px] md:text-xs font-black text-zinc-400 w-12 text-right tracking-tighter">{formatTime(currentTime)}</span>
@@ -316,6 +321,7 @@ export default function CinemaVault() {
         </div>
       )}
 
+      {/* MODAL ĐĂNG XUẤT */}
       {showLogoutModal && (
         <div className="fixed inset-0 z-[200] bg-black/95 backdrop-blur-xl flex items-center justify-center p-6 animate-in fade-in zoom-in duration-300">
           <div className="w-full max-w-xs bg-zinc-900 border border-white/10 p-10 rounded-[3rem] text-center shadow-2xl">
@@ -334,6 +340,12 @@ export default function CinemaVault() {
         ::-webkit-scrollbar-thumb { background: #3f3f46; border-radius: 10px; }
         ::-webkit-scrollbar-track { background: transparent; }
         input[type='range']::-webkit-slider-thumb { appearance: none; width: 14px; height: 14px; background: #dc2626; border-radius: 50%; cursor: pointer; box-shadow: 0 0 10px rgba(220,38,38,0.5); }
+        /* Tối ưu hóa render video trên mobile */
+        video {
+            -webkit-transform: translateZ(0);
+            backface-visibility: hidden;
+            perspective: 1000;
+        }
       `}</style>
     </div>
   );
